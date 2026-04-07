@@ -67,7 +67,7 @@ def create_sliding_windows(df: pd.DataFrame, window_size: int = 20) -> np.ndarra
 
 if __name__ == "__main__":
     CLEANED_LOGS = "data/linux_logs_cleaned.csv"
-    OUTPUT_TENSOR = "data/training_sequences.npy"
+    OUTPUT_TENSOR = "data/data_sequences.npy"
     window_size = 20
 
     try:

@@ -63,7 +63,6 @@ def clean_linux_logs(file_path: str, output_path: str) -> None:
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
 
-
 if __name__ == "__main__":
     # Standard file definitions for the SecuriteAI preprocessing stage
     RAW_LOGS = "data/Linux_2k.log_structured.csv"
