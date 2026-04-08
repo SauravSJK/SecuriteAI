@@ -98,7 +98,7 @@ def main():
     window_size = 20    # Sliding window length
     num_epochs = 100
     batch_size = 32
-    
+
     input_file = "data/linux_logs.csv"
     cleaned_file = "data/linux_logs_cleaned.csv"
     sequences_file = "data/data_sequences.npy"
@@ -139,10 +139,16 @@ def main():
     model = Autoencoder(input_dim, hidden_dim, window_size)
     train_autoencoder(model, train_loader, val_loader, num_epochs=num_epochs, device=device)
 
+    # Save the trained model for future inference or deployment
+    torch.save(model.state_dict(), "data/autoencoder.pth")
+
     # 4. Threshold Calculation (The Anomaly Boundary)
     print("\n[*] Calculating anomaly threshold from training distribution...")
     train_losses = calculate_losses(model, train_loader, device)
     threshold = np.percentile(train_losses, 99.5) # 99.5th percentile
+
+    # Save the threshold for inference use (e.g., in a real-time monitoring system)
+    np.save("data/threshold.npy", threshold)
     
     # 5. Attack Verification
     print("[*] Evaluating system against 'Attack' data (SSH logs)...")
