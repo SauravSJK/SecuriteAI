@@ -1,8 +1,11 @@
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 from torch.utils.data import DataLoader, TensorDataset, Subset
+from clean_log import clean_linux_logs
+from feat_eng import feature_engineering_pipeline
 from autoencoder import Autoencoder
 
 def calculate_losses(model: nn.Module, loader: DataLoader, device: torch.device) -> np.ndarray:
@@ -96,6 +99,10 @@ def main():
     num_epochs = 100
     batch_size = 32
     
+    input_file = "data/linux_logs.csv"
+    cleaned_file = "data/linux_logs_cleaned.csv"
+    sequences_file = "data/data_sequences.npy"
+    
     device = torch.device(
         "cuda" if torch.cuda.is_available() 
         else "mps" if torch.backends.mps.is_available() 
@@ -104,10 +111,11 @@ def main():
 
     # 2. Data Loading & Index Slicing
     try:
-        data = np.load("data/data_sequences.npy")
+        data = np.load(sequences_file)
     except FileNotFoundError:
-        print("[ERROR] data_sequences.npy not found. Please run feature engineering first.")
-        return
+        clean_linux_logs(input_file, cleaned_file)
+        feature_engineering_pipeline(cleaned_file, sequences_file, window_size)
+        data = np.load(sequences_file)
 
     # Slicing logic: 
     # Training: End of file (Normal boot logs)
