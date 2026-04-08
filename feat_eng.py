@@ -37,6 +37,7 @@ def normalize_event_id(df: pd.DataFrame) -> pd.DataFrame:
     min_val = df["Event_ID"].min()
     max_val = df["Event_ID"].max()
     df["Event_ID_Normalized"] = (df["Event_ID"] - min_val) / (max_val - min_val)
+    np.save("data/event_id_scaler.npy", np.array([min_val, max_val]))  # Save scaler parameters for inference
     return df
 
 

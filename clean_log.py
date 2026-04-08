@@ -52,6 +52,7 @@ def clean_linux_logs(file_path: str, output_path: str) -> None:
         cleaned_df.to_csv(output_path, index=False)
 
         print("\nData preparation successful.")
+        print("Sample of cleaned data:")
         print("-" * 30)
         print(cleaned_df.head())
         print("-" * 30)
