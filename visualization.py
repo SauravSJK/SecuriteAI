@@ -14,6 +14,7 @@ MODEL_DIR = "models"
 MODEL_WEIGHTS = os.path.join(MODEL_DIR, "securiteai_model.pth")
 THRESHOLD_PATH = os.path.join(MODEL_DIR, "anomaly_threshold.npy")
 SCALER_PATH = os.path.join(MODEL_DIR, "scaler_params.npy")
+VISUAL_PATH = os.path.join("visualizations", "securiteai_visual_report.png")
 
 INPUT_DIM = 9  # 8 cyclical features + 1 normalized Event ID
 HIDDEN_DIM = 64
@@ -114,9 +115,8 @@ def generate_visual_report():
     plt.legend(loc="upper left")
 
     # Save the result
-    plot_filename = "securiteai_visual_report.png"
-    plt.savefig(plot_filename, dpi=300)
-    print(f"[SUCCESS] Skyscraper plot saved as: {plot_filename}")
+    plt.savefig(VISUAL_PATH, dpi=300)
+    print(f"[SUCCESS] Skyscraper plot saved as: {VISUAL_PATH}")
 
 
 if __name__ == "__main__":
