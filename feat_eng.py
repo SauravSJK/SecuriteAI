@@ -79,8 +79,6 @@ def feature_engineering_pipeline(
     ]
 
     features = df[feature_cols].values
-    windows = sliding_window_view(features, (window_size, features.shape[1])).squeeze(
+    return sliding_window_view(features, (window_size, features.shape[1])).squeeze(
         axis=1
     )
-    print(f"[SUCCESS] Created {windows.shape[0]} windows of size {window_size}.")
-    return windows
