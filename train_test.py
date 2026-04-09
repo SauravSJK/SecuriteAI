@@ -1,174 +1,167 @@
+import os
+import shutil
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import numpy as np
 from torch.utils.data import DataLoader, TensorDataset, Subset
+from autoencoder import Autoencoder
 from clean_log import clean_linux_logs
 from feat_eng import feature_engineering_pipeline
-from autoencoder import Autoencoder
+from generate_data import generate_securiteai_dataset
 
-def calculate_losses(model: nn.Module, loader: DataLoader, device: torch.device) -> np.ndarray:
+# ==========================================
+# 1. CONFIGURATION & PATHS
+# ==========================================
+# Model Artifacts
+MODEL_DIR = "models"
+MODEL_WEIGHTS_PATH = os.path.join(MODEL_DIR, "securiteai_model.pth")
+THRESHOLD_PATH = os.path.join(MODEL_DIR, "anomaly_threshold.npy")
+SCALER_PATH = os.path.join(MODEL_DIR, "scaler_params.npy")
+
+# Hyperparameters
+INPUT_DIM = 9  # 9 engineered features per log entry
+HIDDEN_DIM = 64
+WINDOW_SIZE = 20
+BATCH_SIZE = 64
+N_EPOCHS = 100
+LEARNING_RATE = 0.001
+
+
+def initialize_environment(directory: str) -> None:
+    """Deletes and recreates the model artifact directory for a clean run."""
+    if os.path.exists(directory):
+        shutil.rmtree(directory)
+    os.makedirs(directory)
+    print(f"[*] Environment initialized: '{directory}/' folder ready.")
+
+
+def get_per_sequence_losses(
+    model: nn.Module, loader: DataLoader, device: torch.device
+) -> np.ndarray:
     """
-    Calculates the reconstruction error for every individual sequence in a dataset.
-    
-    Args:
-        model: The trained Autoencoder model.
-        loader: DataLoader containing the sequences to evaluate.
-        device: The computation device (CPU/GPU/MPS).
-        
-    Returns:
-        np.ndarray: A 1D array of Mean Squared Error (MSE) values per sequence.
+    Calculates reconstruction error for every individual sequence in the loader.
+    Used for thresholding and accuracy evaluation.
     """
     model.eval()
-    # We use reduction='none' to get the error for each specific sample 
-    # instead of the batch average.
-    criterion = nn.MSELoss(reduction='none')
+    criterion = nn.MSELoss(reduction="none")
     all_losses = []
-
     with torch.no_grad():
         for batch in loader:
-            # Handle cases where DataLoader returns (data,) or (data, label)
-            inputs = batch[0] if isinstance(batch, (list, tuple)) else batch
-            inputs = inputs.to(device)
-            
-            outputs = model(inputs)
-            
-            # Calculate MSE: (Batch, Seq, Feat)
-            loss = criterion(outputs, inputs)
-            
-            # Average loss across sequence and feature dimensions to get per-sequence loss
-            # Shape transition: (Batch, 20, 11) -> (Batch)
-            per_sequence_loss = loss.mean(dim=(1, 2))
-            
-            all_losses.extend(per_sequence_loss.cpu().numpy())
-            
+            x = batch[0].to(device)
+            loss = criterion(model(x), x).mean(dim=(1, 2))
+            all_losses.extend(loss.cpu().numpy())
     return np.array(all_losses)
 
-def train_autoencoder(
-    model: Autoencoder,
-    train_loader: DataLoader,
-    val_loader: DataLoader,
-    num_epochs: int = 50,
-    lr: float = 0.001,
-    device: torch.device = torch.device("cpu")
-) -> None:
-    """
-    Executes the training loop for the LSTM-Autoencoder.
-    """
-    model.to(device)
-    criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=lr)
-
-    print(f"[*] Starting training on {device}...")
-
-    for epoch in range(num_epochs):
-        model.train()
-        train_loss = 0.0
-        for batch in train_loader:
-            inputs = batch[0] if isinstance(batch, (list, tuple)) else batch
-            inputs = inputs.to(device)
-
-            optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, inputs)
-            loss.backward()
-            optimizer.step()
-            train_loss += loss.item()
-
-        # Validation phase
-        model.eval()
-        val_loss = 0.0
-        with torch.no_grad():
-            for batch in val_loader:
-                inputs = batch[0] if isinstance(batch, (list, tuple)) else batch
-                inputs = inputs.to(device)
-                outputs = model(inputs)
-                val_loss += criterion(outputs, inputs).item()
-
-        if (epoch + 1) % 10 == 0 or epoch == 0:
-            print(f"Epoch [{epoch+1:02d}/{num_epochs}] | "
-                  f"Train Loss: {train_loss/len(train_loader):.6f} | "
-                  f"Val Loss: {val_loss/len(val_loader):.6f}")
 
 def main():
-    # 1. Configuration & Hyperparameters
-    input_dim = 11      # Based on 11 cyclical + EventID features
-    hidden_dim = 64     # Bottleneck size
-    window_size = 20    # Sliding window length
-    num_epochs = 100
-    batch_size = 32
-
-    input_file = "data/linux_logs.csv"
-    cleaned_file = "data/linux_logs_cleaned.csv"
-    sequences_file = "data/data_sequences.npy"
-    
-    device = torch.device(
-        "cuda" if torch.cuda.is_available() 
-        else "mps" if torch.backends.mps.is_available() 
+    # 0. Prep Environment
+    initialize_environment(MODEL_DIR)
+    DEVICE = torch.device(
+        "cuda"
+        if torch.cuda.is_available()
+        else "mps"
+        if torch.backends.mps.is_available()
         else "cpu"
     )
 
-    # 2. Data Loading & Index Slicing
-    try:
-        data = np.load(sequences_file)
-    except FileNotFoundError:
-        clean_linux_logs(input_file, cleaned_file)
-        feature_engineering_pipeline(cleaned_file, sequences_file, window_size)
-        data = np.load(sequences_file)
+    # 1. DATA GENERATION & PIPELINE
+    # Step 1: Generate Synthetic Logs (10k Normal, 1k Anomaly)
+    print("[*] Launching synthetic log generation...")
+    logs = generate_securiteai_dataset()
 
-    # Slicing logic: 
-    # Training: End of file (Normal boot logs)
-    # Testing: Start of file (SSH Brute Force attacks)
-    train_size = 500
-    val_size = 100
-    test_size = 500
+    # Step 2: Clean raw data
+    cleaned_df = clean_linux_logs(logs)
 
-    train_indices = range(len(data) - train_size, len(data))
-    val_indices = range(len(data) - (train_size + val_size), len(data) - train_size)
-    test_indices = range(0, test_size)
+    # Step 3: Feature Engineering & Windowing
+    print("[*] Running feature engineering pipeline...")
+    # This also saves the scaler_params to SCALER_PATH for inference consistency
+    data = feature_engineering_pipeline(
+        cleaned_df, window_size=WINDOW_SIZE, scaler_path=SCALER_PATH
+    )
+    tensor_data = torch.tensor(data).float()
 
-    # Convert to Tensors and create Loaders
-    tensor_data = torch.from_numpy(data).float()
-    
-    train_loader = DataLoader(Subset(TensorDataset(tensor_data), train_indices), batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(Subset(TensorDataset(tensor_data), val_indices), batch_size=batch_size, shuffle=False)
-    test_loader = DataLoader(Subset(TensorDataset(tensor_data), test_indices), batch_size=batch_size, shuffle=False)
+    # Step 4: Precise Slicing for Accuracy Measurement
+    # Based on 10,000 Normal followed by 1,000 Anomaly:
+    # Windows 0 to 9,980 are PURE NORMAL
+    # Windows 9,981 to 10,980 contain ANOMALIES
 
-    # 3. Model Initialization & Training
-    model = Autoencoder(input_dim, hidden_dim, window_size)
-    train_autoencoder(model, train_loader, val_loader, num_epochs=num_epochs, device=device)
+    train_indices = range(0, 8000)  # Bulk Normal for training
+    norm_test_indices = range(8981, 9981)  # Unseen Normal for FPR check
+    anomaly_test_indices = range(9981, len(data))  # Unseen Anomalies for TPR check
 
-    # Save the trained model for future inference or deployment
-    torch.save(model.state_dict(), "data/autoencoder.pth")
+    train_loader = DataLoader(
+        Subset(TensorDataset(tensor_data), train_indices),
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+    )
+    norm_test_loader = DataLoader(
+        Subset(TensorDataset(tensor_data), norm_test_indices), batch_size=BATCH_SIZE
+    )
+    anomaly_test_loader = DataLoader(
+        Subset(TensorDataset(tensor_data), anomaly_test_indices), batch_size=BATCH_SIZE
+    )
 
-    # 4. Threshold Calculation (The Anomaly Boundary)
-    print("\n[*] Calculating anomaly threshold from training distribution...")
-    train_losses = calculate_losses(model, train_loader, device)
-    threshold = np.percentile(train_losses, 99.5) # 99.5th percentile
+    # 2. MODEL TRAINING
+    model = Autoencoder(
+        input_dim=INPUT_DIM, hidden_dim=HIDDEN_DIM, window_size=WINDOW_SIZE
+    ).to(DEVICE)
+    optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    criterion = nn.MSELoss()
 
-    # Save the threshold for inference use (e.g., in a real-time monitoring system)
-    np.save("data/threshold.npy", threshold)
-    
-    # 5. Attack Verification
-    print("[*] Evaluating system against 'Attack' data (SSH logs)...")
-    test_losses = calculate_losses(model, test_loader, device)
-    
-    avg_normal_loss = np.mean(train_losses)
-    avg_attack_loss = np.mean(test_losses)
-    anomalies_detected = np.sum(test_losses > threshold)
+    print(f"[*] Training SecuriteAI on {DEVICE} for {N_EPOCHS} epochs...")
+    for epoch in range(N_EPOCHS):
+        model.train()
+        epoch_loss = 0.0
+        for batch in train_loader:
+            x = batch[0].to(DEVICE)
+            optimizer.zero_grad()
+            loss = criterion(model(x), x)
+            loss.backward()
+            optimizer.step()
+            epoch_loss += loss.item()
 
-    # 6. Final Report
-    print("\n" + "="*40)
-    print(" SECURITEAI: FINAL SYSTEM REPORT")
-    print("="*40)
-    print(f"Statistical Threshold:   {threshold:.6f}")
-    print(f"Average Normal MSE:      {avg_normal_loss:.6f}")
-    print(f"Average Attack MSE:      {avg_attack_loss:.6f}")
-    print(f"Signal-to-Noise Ratio:   {avg_attack_loss / avg_normal_loss:.2f}x")
-    print("-" * 40)
-    print(f"Anomalies Flagged:       {anomalies_detected} / {len(test_losses)}")
-    print(f"Detection Rate:          {(anomalies_detected/len(test_losses))*100:.1f}%")
-    print("="*40)
+        if (epoch + 1) % (N_EPOCHS // 10) == 0:
+            avg_loss = epoch_loss / len(train_loader)
+            print(f"[*] Epoch {epoch + 1}/{N_EPOCHS} | Train Loss: {avg_loss:.6f}")
+
+    # 3. THRESHOLDING (Statistical Baseline)
+    print("[*] Calculating statistical anomaly threshold (99.5th percentile)...")
+    train_losses = get_per_sequence_losses(model, train_loader, DEVICE)
+    threshold = np.percentile(train_losses, 99.5)
+
+    # 4. ACCURACY EVALUATION
+    print("[*] Running accuracy validation on unseen Normal and Anomaly sets...")
+
+    # Evaluate on Normal logs (Target: 0% anomalies flagged)
+    norm_losses = get_per_sequence_losses(model, norm_test_loader, DEVICE)
+    false_positives = np.sum(norm_losses > threshold)
+    fpr = (false_positives / len(norm_losses)) * 100
+
+    # Evaluate on Anomaly logs (Target: 100% anomalies flagged)
+    anomaly_losses = get_per_sequence_losses(model, anomaly_test_loader, DEVICE)
+    true_positives = np.sum(anomaly_losses > threshold)
+    tpr = (true_positives / len(anomaly_losses)) * 100
+
+    # 5. FINAL REPORTING
+    print("\n" + "=" * 45)
+    print(" SECURITEAI: COMPREHENSIVE ACCURACY REPORT")
+    print("=" * 45)
+    print(f"Anomaly Threshold:        {threshold:.6f}")
+    print(f"Normal Test Samples:      {len(norm_losses)}")
+    print(f"Anomaly Test Samples:     {len(anomaly_losses)}")
+    print("-" * 45)
+    print(f"False Positive Rate:      {fpr:.2f}% (Target: < 1%)")
+    print(f"Detection Rate (Recall):  {tpr:.2f}% (Target: ~100%)")
+    print(
+        f"Signal-to-Noise Ratio:    {np.mean(anomaly_losses) / np.mean(norm_losses):.2f}x"
+    )
+    print("=" * 45)
+
+    # Save artifacts
+    torch.save(model.state_dict(), MODEL_WEIGHTS_PATH)
+    np.save(THRESHOLD_PATH, threshold)
+    print(f"[SUCCESS] SecuriteAI artifacts saved to '{MODEL_DIR}/'.")
+
 
 if __name__ == "__main__":
     main()
