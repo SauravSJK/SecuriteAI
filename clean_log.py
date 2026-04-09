@@ -25,6 +25,7 @@ def clean_linux_logs(input_df: pd.DataFrame) -> pd.DataFrame:
         cleaned_df = df[["Timestamp", "Component", "Event_ID"]]
         cleaned_df = cleaned_df.sort_values(by="Timestamp").reset_index(drop=True)
 
+        print(f"[SUCCESS] Cleaned {len(cleaned_df)} logs and sorted chronologically.")
         return cleaned_df
 
     except Exception as e:

@@ -51,4 +51,5 @@ def generate_securiteai_dataset() -> pd.DataFrame:
             }
         )
 
+    print(f"[SUCCESS] Generated {len(logs)} logs: 10,000 Normal and 1,000 Anomalies.")
     return pd.DataFrame(logs)
