@@ -6,10 +6,12 @@ from typing import Optional, Tuple
 
 def extract_cyclical_temporal_features(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Transforms timestamps into sine and cosine pairs.
-
-    This preserves cyclical relationships (e.g., 23:59 is close to 00:01)
-    across Hour, Minute, Second, Day, and Month dimensions.
+    Encodes time as Sin/Cos pairs. We use Hour, Minute, Second, and Day
+    to provide context without overfitting to a specific month.
+    Args:
+        df: DataFrame with a 'Timestamp' column of datetime type.
+    Returns:
+        DataFrame with added cyclical features.
     """
     time_specs = {
         "Hour": (df["Timestamp"].dt.hour, 24),
@@ -30,10 +32,14 @@ def normalize_event_id(
     params: Optional[Tuple[float, float]] = None,
 ) -> pd.DataFrame:
     """
-    Applies Min-Max scaling to the Event_ID.
-
-    If params are provided, it uses them (Inference). If not, it fits on the
-    data and saves the parameters to the specified path (Training).
+    Min-Max scaling for Event_ID. During training, we fit ONLY on Normal logs.
+    During inference, we load the same scaler parameters to ensure consistency.
+    Args:
+        df: DataFrame with an 'Event_ID' column to normalize.
+        scaler_path: Optional path to save/load scaler parameters (min, max).
+        params: Optional tuple of (min, max) for scaling. If None, it will be computed from the data.
+    Returns:
+        DataFrame with an added 'Event_ID_Normalized' column.
     """
     if params:
         min_v, max_v = params
@@ -42,6 +48,7 @@ def normalize_event_id(
         if scaler_path:
             np.save(scaler_path, np.array([min_v, max_v]))
 
+    # Scale and handle clipping for inference
     df["Event_ID_Normalized"] = (df["Event_ID"] - min_v) / (max_v - min_v)
     return df
 
@@ -53,12 +60,12 @@ def feature_engineering_pipeline(
     scaler_params: Optional[Tuple[float, float]] = None,
 ) -> np.ndarray:
     """
-    Orchestrates the conversion of a DataFrame into a 3D windowed tensor.
+    Orchestrates the conversion of a DataFrame into a windowed 3D tensor.
     """
-    df["Timestamp"] = pd.to_datetime(df["Timestamp"])
     df = extract_cyclical_temporal_features(df)
     df = normalize_event_id(df, scaler_path=scaler_path, params=scaler_params)
 
+    # 9 Primary features: 8 cyclical + 1 normalized Event ID
     feature_cols = [
         "Hour_Sin",
         "Hour_Cos",
@@ -72,7 +79,6 @@ def feature_engineering_pipeline(
     ]
 
     features = df[feature_cols].values
-    # Memory-efficient sliding window creation
     return sliding_window_view(features, (window_size, features.shape[1])).squeeze(
         axis=1
     )
