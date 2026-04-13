@@ -53,4 +53,4 @@ The system is fully containerized for consistency across environments.
     ```bash
     docker run -d -p 8000:8000 -v "$(pwd)/models:/app/models" securiteai-app
 
-3. **Test API:**Navigate to http://localhost:8000/docs to test the model via the interactive Swagger UI.
+3. **Test API:** Navigate to http://localhost:8000/docs to test the model via the interactive Swagger UI.
