@@ -1,36 +1,32 @@
-# SecuriteAI: Unsupervised Anomaly Detection for Linux Logs
+# SecuriteAI: Production-Grade Anomaly Detection for Linux Logs
 
-**SecuriteAI** is an unsupervised deep learning pipeline designed to identify "zero-day" anomalies in Linux system logs. Rather than relying on static attack signatures, the system utilizes an **LSTM-Autoencoder** to learn the underlying "temporal grammar" of healthy system behavior.
+**SecuriteAI** is an unsupervised deep learning pipeline designed to identify "zero-day" anomalies in Linux system logs. By utilizing an **LSTM-Autoencoder**, the system learns the "temporal grammar" of healthy system behavior and flags deviations in real-time via a REST API.
 
 ---
 
 ## 🚀 Key Performance Metrics
 
-Based on the final system evaluation using synthetic data, SecuriteAI achieved the following results:
-
-* **Signal-to-Noise Ratio (SNR):** `95,282.77x` — Indicating a massive mathematical separation between normal operations and attack states.
+* **Signal-to-Noise Ratio (SNR):** `~95,000x` — Massive mathematical separation between normal operations and attack states.
 * **Detection Rate (Recall):** `100.00%` on high-entropy anomaly bursts.
-* **False Positive Rate (FPR):** `1.41%` on unseen normal system logs.
+* **Generalization:** Successfully handles multi-date temporal features through clustered training across 365 days.
 
 ---
 
 ## 🧠 Engineering Architecture
 
-### 1. Reconstructive Modeling
-The core architecture is a **Sequence-to-Sequence LSTM-Autoencoder**.
-* **Encoder:** Compresses a sequence of 20 logs into a fixed-size latent bottleneck of 64 dimensions.
-* **Decoder:** Attempts to reconstruct the original 20-log sequence from the latent vector.
-* **Logic:** The model is trained exclusively on normal data; it reconstructs healthy logs with low error but fails significantly when encountering anomalous patterns it has never seen before.
+### 1. Generalizing Temporal Logic
+Unlike standard models that overfit to specific dates, SecuriteAI utilizes **Clustered Generation**:
+* **Temporal Variety:** Training data is distributed across random clusters over a full year.
+* **Cyclical Encoding:** Timestamps are decomposed into **Sine and Cosine pairs** for Hour, Minute, Second, and Day to preserve temporal adjacency (e.g., 23:59 is near 00:01).
 
-### 2. Cyclical Temporal Engineering
-Time is treated as a cyclical feature to preserve temporal adjacency (e.g., ensuring the model understands 23:59 is close to 00:01).
-* Timestamps are decomposed into **Sine and Cosine pairs** for the Hour, Minute, Second, and Day dimensions.
-* This results in an **8-dimensional temporal feature set** that captures system routines without overfitting to specific dates.
+### 2. Reconstructive Modeling
+* **Encoder:** Compresses a sequence of 20 logs into a 64-dimensional latent bottleneck.
+* **Decoder:** Reconstructs the original sequence; healthy logs yield low Mean Squared Error (MSE), while anomalies cause a spike.
 
-### 3. Isolation-Based Normalization
-The system leverages a "poisoned" normalization strategy to maximize sensitivity.
-* The **Min-Max scaler** for Event IDs is fitted strictly on the "Normal" training pool.
-* When a high-ID anomaly (e.g., `E999`) occurs, its normalized value falls far outside the standard `0.0` to `1.0` range, triggering an immediate spike in reconstruction loss.
+### 3. Production Deployment (Docker)
+The system is fully containerized for consistency across environments.
+* **FastAPI Wrapper:** Serves the model at the `/predict` endpoint.
+* **Volume Mounting:** Weights and thresholds are mounted externally to allow for model updates without rebuilding the image.
 
 ---
 
@@ -38,18 +34,23 @@ The system leverages a "poisoned" normalization strategy to maximize sensitivity
 
 | File | Primary Responsibility |
 | :--- | :--- |
+| `app.py` | FastAPI application for real-time inference. |
 | `autoencoder.py` | Defines the 2-layer LSTM Encoder and Decoder classes. |
-| `clean_log.py` | Handles timestamp synthesis and numeric Event ID extraction. |
+| `generate_data.py` | Generates a generalized dataset spanning 365 days. |
+| `Dockerfile` | Blueprint for creating the isolated container environment. |
 | `feat_eng.py` | Orchestrates cyclical time encoding and sliding window creation. |
-| `generate_data.py` | Synthetic log generator (10,000 Normal / 1,000 Anomaly). |
-| `train_test.py` | Manages model training (100 epochs) and accuracy reporting. |
-| `visualization.py` | Generates "Skyscraper" plots to visualize reconstruction error spikes. |
+| `train_test.py` | Manages training and establishes the anomaly threshold. |
 
 ---
 
 ## 🛠️ Usage Pipeline
 
-1.  **Environment Initialization:** Run `train_test.py` to clear previous artifacts and create a fresh `models/` directory.
-2.  **Training & Thresholding:** Trains the autoencoder for 100 epochs, establishing an anomaly threshold at the **99.5th percentile** of training loss.
-3.  **Inference:** Use the saved model weights and scaler parameters to evaluate incoming logs in real-time.
-4.  **Visualization:** Run `visualization.py` to generate a report showing the mathematical "surprise" of the model during simulated attack bursts.
+1. **Build the Fortress:**
+   ```bash
+   docker build -t securiteai-app .
+
+2. **Run Inference Server:**
+    ```bash
+    docker run -d -p 8000:8000 -v "$(pwd)/models:/app/models" securiteai-app
+
+3. **Test API:**Navigate to http://localhost:8000/docs to test the model via the interactive Swagger UI.
