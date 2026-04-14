@@ -20,7 +20,7 @@ The system includes built-in telemetry for monitoring model performance "in the 
 The project is organized into a modular hierarchy to separate concerns between core logic, infrastructure, and model artifacts:
 * **`src/`**: Contains core model architectures and feature engineering pipelines.
 * **`api/`**: Houses the FastAPI inference layer and request validation schemas.
-* [cite_start]**`deployments/`**: Contains Docker and Nginx configurations for orchestration.
+* **`deployments/`**: Contains Docker and Nginx configurations for orchestration.
 * **`artifacts/`**: Secure storage for trained weights and normalization parameters.
 
 ### 2. Horizontal Scaling & Load Balancing
@@ -41,7 +41,7 @@ Using **Docker Compose**, you can launch the entire load-balanced cluster from t
     Ensure your `artifacts/` directory contains the pre-trained weights (`securiteai_model.pth`) and baseline metrics (`loss_metrics.npy`, `scaler_params.npy`, and `anomaly_threshold.npy`).
 
 2.  **Launch the Cluster:**
-    [cite_start]Navigate to the `deployments/` folder and initialize the Nginx controller and inference fleet[cite: 3]:
+    Navigate to the `deployments/` folder and initialize the Nginx controller and inference fleet[cite: 3]:
     ```bash
     docker-compose up --build -d
     ```
