@@ -1,56 +1,53 @@
-# SecuriteAI: Production-Grade Anomaly Detection for Linux Logs
+# SecuriteAI: Enterprise Anomaly Detection
 
-**SecuriteAI** is an unsupervised deep learning pipeline designed to identify "zero-day" anomalies in Linux system logs. By utilizing an **LSTM-Autoencoder**, the system learns the "temporal grammar" of healthy system behavior and flags deviations in real-time via a REST API.
+**SecuriteAI** is a high-throughput, distributed deep learning system for Linux log analysis. It identifies security breaches by detecting deviations from "Normal" temporal patterns using an LSTM-Autoencoder architecture.
 
 ---
 
-## 🚀 Key Performance Metrics
+## 🚀 Observability & Metrics
 
-* **Signal-to-Noise Ratio (SNR):** `~95,000x` — Massive mathematical separation between normal operations and attack states.
-* **Detection Rate (Recall):** `100.00%` on high-entropy anomaly bursts.
-* **Generalization:** Successfully handles multi-date temporal features through clustered training across 365 days.
+The system includes built-in telemetry for monitoring model performance "in the wild":
+* **Real-Time MSE Tracking:** Visualized via Prometheus histograms to track reconstruction error distributions.
+* **Confidence Scoring:** Utilizes Z-score statistical analysis to assign risk levels ranging from Low to Critical.
+* **Automated Alerting:** Asynchronous webhook triggers for instant incident response via background tasks.
+* **Metrics Endpoint:** Accessible at `/metrics` for integration with Prometheus and Grafana dashboards.
 
 ---
 
 ## 🧠 Engineering Architecture
 
-### 1. Generalizing Temporal Logic
-Unlike standard models that overfit to specific dates, SecuriteAI utilizes **Clustered Generation**:
-* **Temporal Variety:** Training data is distributed across random clusters over a full year.
-* **Cyclical Encoding:** Timestamps are decomposed into **Sine and Cosine pairs** for Hour, Minute, Second, and Day to preserve temporal adjacency (e.g., 23:59 is near 00:01).
+### 1. Horizontal Scaling & Load Balancing
+The system utilizes an **Nginx Load Balancer** to distribute high-volume log traffic across a fleet of identical SecuriteAI inference containers.
+* **Strategy:** Implements a Round Robin distribution for optimal resource utilization across the cluster.
+* **Redundancy:** Configured with multiple replicas to ensure high availability and high-throughput processing.
 
-### 2. Reconstructive Modeling
-* **Encoder:** Compresses a sequence of 20 logs into a 64-dimensional latent bottleneck.
-* **Decoder:** Reconstructs the original sequence; healthy logs yield low Mean Squared Error (MSE), while anomalies cause a spike.
+### 2. Vectorized Batch Inference
+The API is optimized for enterprise log volume by supporting **Log Batching**. This allows the system to utilize the parallel processing power of the 9-feature tensor, analyzing multiple log sequences in a single mathematical pass.
 
-### 3. Production Deployment (Docker)
-The system is fully containerized for consistency across environments.
-* **FastAPI Wrapper:** Serves the model at the `/predict` endpoint.
-* **Volume Mounting:** Weights and thresholds are mounted externally to allow for model updates without rebuilding the image.
+### 3. Memory-Resident Caching
+To minimize latency during high-traffic bursts, all critical artifacts—including Scaler parameters, model weights, and baseline statistics—are cached in RAM via the FastAPI `lifespan` manager. This eliminates repeated and slow disk I/O operations during active requests.
 
 ---
 
-## 📂 Project Structure
+## 🛠️ Deployment (The Scaled Fortress)
 
-| File | Primary Responsibility |
-| :--- | :--- |
-| `app.py` | FastAPI application for real-time inference. |
-| `autoencoder.py` | Defines the 2-layer LSTM Encoder and Decoder classes. |
-| `generate_data.py` | Generates a generalized dataset spanning 365 days. |
-| `Dockerfile` | Blueprint for creating the isolated container environment. |
-| `feat_eng.py` | Orchestrates cyclical time encoding and sliding window creation. |
-| `train_test.py` | Manages training and establishes the anomaly threshold. |
+Using **Docker Compose**, you can launch the entire load-balanced cluster with a single command.
 
----
+1.  **Prepare the Environment:**
+    Ensure your `models/` directory contains the pre-trained weights (`securiteai_model.pth`) and baseline metrics (`loss_metrics.npy`, `scaler_params.npy`, and `anomaly_threshold.npy`).
 
-## 🛠️ Usage Pipeline
-
-1. **Build the Fortress:**
-   ```bash
-   docker build -t securiteai-app .
-
-2. **Run Inference Server:**
+2.  **Launch the Cluster:**
+    This command builds the image, initializes the Nginx controller, and scales the inference engine to multiple replicas.
     ```bash
-    docker run -d -p 8000:8000 -v "$(pwd)/models:/app/models" securiteai-app
+    docker-compose up --build -d
+    ```
 
-3. **Test API:** Navigate to http://localhost:8000/docs to test the model via the interactive Swagger UI.
+3.  **Dynamic Scaling:**
+    If log volume increases, scale the inference fleet to 10+ instances instantly to handle the load:
+    ```bash
+    docker-compose up -d --scale securiteai-app=10
+    ```
+
+4.  **Inference & Monitoring:**
+    * **Load Balanced API:** `POST http://localhost/predict` (Port 80).
+    * **Aggregated Telemetry:** `GET http://localhost/metrics`.

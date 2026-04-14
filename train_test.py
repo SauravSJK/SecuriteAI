@@ -15,6 +15,7 @@ MODEL_DIR = "models"
 WEIGHTS = os.path.join(MODEL_DIR, "securiteai_model.pth")
 THRESHOLD_FILE = os.path.join(MODEL_DIR, "anomaly_threshold.npy")
 SCALER_FILE = os.path.join(MODEL_DIR, "scaler_params.npy")
+LOSS_METRICS_FILE = os.path.join(MODEL_DIR, "loss_metrics.npy")
 
 N_EPOCHS = 100
 BATCH_SIZE = 64
@@ -142,6 +143,7 @@ def main():
 
     torch.save(model.state_dict(), WEIGHTS)
     np.save(THRESHOLD_FILE, threshold)
+    np.save(LOSS_METRICS_FILE, np.array([norm_test_losses]))
 
 
 if __name__ == "__main__":

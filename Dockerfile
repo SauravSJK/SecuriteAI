@@ -1,20 +1,22 @@
-# Base Layer: Start with a lightweight Python environment
+# Base Layer: Optimized for ML inference
 FROM python:3.9-slim
 
-# Work Dir: Set the primary folder for the app
+# Work Dir: Isolated application environment
 WORKDIR /app
 
-# Dependency Layer: Install libraries first (this speeds up future builds)
+# Dependency Layer: Pre-installing libraries to cache layers
+# Added prometheus-client for real-time telemetry
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Code Layer: Copy the logic files into the container
-# Copy individual files to keep the container clean
+# Code Layer: Synchronization of enterprise logic
 COPY app.py autoencoder.py clean_log.py feat_eng.py ./
 
-# Create the models directory inside the container
+# Persistence: Preparing the mount point for model weights and baseline metrics
 RUN mkdir models
 
-# Execution: Start the FastAPI server when the container boots
-# Use 0.0.0.0 to allow the container to communicate with the real computer
+# Network: Exposing port 8000 for FastAPI and Prometheus scraping
+EXPOSE 8000
+
+# Execution: Launching with 0.0.0.0 to enable cross-container communication
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
