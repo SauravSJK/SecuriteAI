@@ -10,7 +10,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Code Layer: Synchronization of enterprise logic
-COPY app.py autoencoder.py clean_log.py feat_eng.py ./
+COPY ../src/ ./src/ and COPY ../api/ ./api/
 
 # Persistence: Preparing the mount point for model weights and baseline metrics
 RUN mkdir models

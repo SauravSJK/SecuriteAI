@@ -16,28 +16,32 @@ The system includes built-in telemetry for monitoring model performance "in the 
 
 ## 🧠 Engineering Architecture
 
-### 1. Horizontal Scaling & Load Balancing
-The system utilizes an **Nginx Load Balancer** to distribute high-volume log traffic across a fleet of identical SecuriteAI inference containers.
+### 1. Modular Directory Structure
+The project is organized into a modular hierarchy to separate concerns between core logic, infrastructure, and model artifacts:
+* **`src/`**: Contains core model architectures and feature engineering pipelines.
+* **`api/`**: Houses the FastAPI inference layer and request validation schemas.
+* [cite_start]**`deployments/`**: Contains Docker and Nginx configurations for orchestration.
+* **`artifacts/`**: Secure storage for trained weights and normalization parameters.
+
+### 2. Horizontal Scaling & Load Balancing
+The system utilizes an **Nginx Load Balancer** to distribute high-volume log traffic across a fleet of identical SecuriteAI inference containers:
 * **Strategy:** Implements a Round Robin distribution for optimal resource utilization across the cluster.
 * **Redundancy:** Configured with multiple replicas to ensure high availability and high-throughput processing.
 
-### 2. Vectorized Batch Inference
-The API is optimized for enterprise log volume by supporting **Log Batching**. This allows the system to utilize the parallel processing power of the 9-feature tensor, analyzing multiple log sequences in a single mathematical pass.
-
-### 3. Memory-Resident Caching
-To minimize latency during high-traffic bursts, all critical artifacts—including Scaler parameters, model weights, and baseline statistics—are cached in RAM via the FastAPI `lifespan` manager. This eliminates repeated and slow disk I/O operations during active requests.
+### 3. Vectorized Batch Inference
+The API is optimized for enterprise log volume by supporting **Log Batching**. This allows the system to utilize parallel processing power, analyzing multiple 20-log sequences in a single mathematical pass.
 
 ---
 
 ## 🛠️ Deployment (The Scaled Fortress)
 
-Using **Docker Compose**, you can launch the entire load-balanced cluster with a single command.
+Using **Docker Compose**, you can launch the entire load-balanced cluster from the `deployments/` directory.
 
 1.  **Prepare the Environment:**
-    Ensure your `models/` directory contains the pre-trained weights (`securiteai_model.pth`) and baseline metrics (`loss_metrics.npy`, `scaler_params.npy`, and `anomaly_threshold.npy`).
+    Ensure your `artifacts/` directory contains the pre-trained weights (`securiteai_model.pth`) and baseline metrics (`loss_metrics.npy`, `scaler_params.npy`, and `anomaly_threshold.npy`).
 
 2.  **Launch the Cluster:**
-    This command builds the image, initializes the Nginx controller, and scales the inference engine to multiple replicas.
+    [cite_start]Navigate to the `deployments/` folder and initialize the Nginx controller and inference fleet[cite: 3]:
     ```bash
     docker-compose up --build -d
     ```
