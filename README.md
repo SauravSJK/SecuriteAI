@@ -14,23 +14,40 @@ The system includes built-in telemetry for monitoring model performance "in the 
 
 ---
 
-## 🧠 Engineering Architecture
+## 🧠 Engineering & Model Architecture
 
-### 1. Modular Directory Structure
-The project is organized into a modular hierarchy to separate concerns between core logic, infrastructure, and model artifacts:
-* **`src/`**: Contains core model architectures and feature engineering pipelines.
-* **`api/`**: Houses the FastAPI inference layer and request validation schemas.
-* **`deployments/`**: Contains Docker and Nginx configurations for orchestration.
-* **`artifacts/`**: Secure storage for trained weights and normalization parameters.
-* **`experiments/`**: Contains scripts for model training, testing, and performance visualization.
+### 1. LSTM-Autoencoder Architecture
+The core "brain" of the system is an Unsupervised Neural Network designed for sequence modeling:
+* **Encoder:** Compresses a sequence of 20 log entries into a low-dimensional "latent space" representation.
+* **Decoder:** Attempts to reconstruct the original 20-log sequence from the compressed latent vector.
+* **Anomaly Logic:** During training, the model learns the patterns of "normal" logs. When an attack occurs, the reconstruction error (MSE) spikes because the decoder cannot accurately recreate the unfamiliar patterns.
 
-### 2. Horizontal Scaling & Load Balancing
-The system utilizes an **Nginx Load Balancer** to distribute high-volume log traffic across a fleet of identical SecuriteAI inference containers:
-* **Strategy:** Implements a Round Robin distribution for optimal resource utilization across the cluster.
-* **Redundancy:** Configured with multiple replicas to ensure high availability and high-throughput processing.
+### 2. Feature Engineering Pipeline
+Raw logs are transformed into a 9-dimensional numerical tensor:
+* **Cyclical Encoding:** Time components (Hour, Minute, Second) and Date components are transformed into $Sin$ and $Cos$ pairs to preserve temporal continuity (e.g., 23:59 being close to 00:01).
+* **Normalization:** Event IDs and numerical features are scaled using Min-Max scaling based exclusively on normal training data distributions.
 
-### 3. Vectorized Batch Inference
-The API is optimized for enterprise log volume by supporting **Log Batching**. This allows the system to utilize parallel processing power, analyzing multiple 20-log sequences in a single mathematical pass.
+### 3. Modular System Design
+The project is organized to separate concerns between core logic, infrastructure, and model artifacts:
+* **`src/`**: Core model architectures (`models/`), log cleaning (`processing/`), and synthetic data generation (`utils/`).
+* **`api/`**: FastAPI inference layer with strict Pydantic validation for log batches.
+* **`deployments/`**: Orchestration logic including `Dockerfile`, `docker-compose.yml`, and `nginx.conf`.
+* **`artifacts/`**: Storage for `weights/` (.pth) and `parameters/` (.npy).
+
+---
+
+## 🌐 Scaling & Load Balancing
+
+### 1. Horizontal Scaling
+The system utilize an **Nginx Load Balancer** to distribute high-volume log traffic across a fleet of identical SecuriteAI inference containers:
+* **Strategy:** Implements a Round Robin distribution for optimal resource utilization.
+* **Redundancy:** Configured with three replicas by default to ensure high availability.
+
+### 2. Vectorized Batch Inference
+The API is optimized for enterprise volume by supporting **Log Batching**. It processes multiple 20-log sequences in a single mathematical pass, significantly reducing overhead per prediction.
+
+### 3. Memory-Resident Caching
+To minimize latency, model weights and baseline statistics are cached in RAM via the FastAPI `lifespan` manager, eliminating slow disk I/O during active inference.
 
 ---
 
@@ -42,13 +59,13 @@ Using **Docker Compose**, you can launch the entire load-balanced cluster from t
     Ensure your `artifacts/` directory contains the pre-trained weights (`securiteai_model.pth`) and baseline metrics (`loss_metrics.npy`, `scaler_params.npy`, and `anomaly_threshold.npy`).
 
 2.  **Launch the Cluster:**
-    Navigate to the root folder and initialize the Nginx controller and inference fleet:
+    Initialize the Nginx controller and the inference fleet:
     ```bash
     docker-compose -f deployments/docker-compose.yml up --build -d
     ```
 
 3.  **Dynamic Scaling:**
-    If log volume increases, scale the inference fleet to 10+ instances instantly to handle the load:
+    Scale the inference fleet to 10+ instances instantly:
     ```bash
     docker-compose -f deployments/docker-compose.yml up --build -d --scale securiteai-app=10
     ```
@@ -67,10 +84,10 @@ Using **Docker Compose**, you can launch the entire load-balanced cluster from t
 
 ## 🧪 Development & Training
 
-To update the model or generate new performance reports, run the following commands from the **project root** using the Python module flag:
+To update the model or generate performance reports, run these commands from the **project root**:
 
 ### 1. Train the Model
-This script generates the dataset, trains the LSTM-Autoencoder, and saves the resulting artifacts.
+This script generates the synthetic dataset, trains the LSTM-Autoencoder, and saves the resulting artifacts to the `artifacts/` folder.
 ```bash
 python -m experiments.train_test
 ```
