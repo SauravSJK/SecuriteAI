@@ -11,9 +11,11 @@ services:
 
   # The Inference Engine (The Scaling Replicas)
   securiteai-app:
-    build: .
+    build: 
+      context: ..
+      dockerfile: deployments/Dockerfile
     volumes:
-      - ./models:/app/models
+      - ../artifacts:/app/artifacts  # Mounting the artifacts directory for model weights and parameters
     deploy:
       replicas: 3  #Horizontal Scaling
     healthcheck:

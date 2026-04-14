@@ -10,9 +10,9 @@ from src.utils.generate_data import generate_securiteai_dataset
 # ==========================================
 # 1. CONFIGURATION & PATHS
 # ==========================================
-WEIGHTS_DIR = "../artifacts/weights"
-PARAMETERS_DIR = "../artifacts/parameters"
-VISUALIZATION_DIR = "../visualizations"
+WEIGHTS_DIR = "artifacts/weights"
+PARAMETERS_DIR = "artifacts/parameters"
+VISUALIZATION_DIR = "visualizations"
 MODEL_WEIGHTS = os.path.join(WEIGHTS_DIR, "securiteai_model.pth")
 THRESHOLD_PATH = os.path.join(PARAMETERS_DIR, "anomaly_threshold.npy")
 SCALER_PATH = os.path.join(PARAMETERS_DIR, "scaler_params.npy")

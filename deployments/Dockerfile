@@ -10,13 +10,14 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Code Layer: Synchronization of enterprise logic
-COPY ../src/ ./src/ and COPY ../api/ ./api/
+COPY src/ ./src/
+COPY api/ ./api/
 
 # Persistence: Preparing the mount point for model weights and baseline metrics
-RUN mkdir models
+RUN mkdir artifacts
 
 # Network: Exposing port 8000 for FastAPI and Prometheus scraping
 EXPOSE 8000
 
 # Execution: Launching with 0.0.0.0 to enable cross-container communication
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8000"]

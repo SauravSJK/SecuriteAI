@@ -10,8 +10,8 @@ from src.processing.feat_eng import feature_engineering_pipeline
 from src.utils.generate_data import generate_securiteai_dataset
 
 # Configuration
-WEIGHTS_DIR = "../artifacts/weights"
-PARAMETERS_DIR = "../artifacts/parameters"
+WEIGHTS_DIR = "artifacts/weights"
+PARAMETERS_DIR = "artifacts/parameters"
 MODEL_WEIGHTS = os.path.join(WEIGHTS_DIR, "securiteai_model.pth")
 THRESHOLD_PATH = os.path.join(PARAMETERS_DIR, "anomaly_threshold.npy")
 SCALER_PATH = os.path.join(PARAMETERS_DIR, "scaler_params.npy")

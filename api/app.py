@@ -16,8 +16,8 @@ from src.processing.feat_eng import feature_engineering_pipeline
 # =================================================================
 # 1. CONFIGURATION & METRICS DEFINITION
 # =================================================================
-WEIGHTS_DIR = "../artifacts/weights"
-PARAMETERS_DIR = "../artifacts/parameters"
+WEIGHTS_DIR = "artifacts/weights"
+PARAMETERS_DIR = "artifacts/parameters"
 MODEL_WEIGHTS = os.path.join(WEIGHTS_DIR, "securiteai_model.pth")
 THRESHOLD_PATH = os.path.join(PARAMETERS_DIR, "anomaly_threshold.npy")
 SCALER_PATH = os.path.join(PARAMETERS_DIR, "scaler_params.npy")
@@ -142,14 +142,13 @@ class LogEntry(BaseModel):
 
 class LogWindow(BaseModel):
     """
-    Mandates a sequence of exactly 20 log entries to form a valid temporal window.
+    Mandates a sequence of at least {WINDOW_SIZE} log entries to form a valid temporal window.
     """
 
     logs: list[LogEntry] = Field(
         ...,
-        description="A sequence of 20 log entries representing a time window for analysis.",
+        description=f"A sequence of {WINDOW_SIZE} log entries representing a time window for analysis.",
         min_length=WINDOW_SIZE,
-        max_length=WINDOW_SIZE,
     )
 
 
