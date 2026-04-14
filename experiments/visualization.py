@@ -2,19 +2,22 @@ import os
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-from autoencoder import Autoencoder
-from clean_log import clean_linux_logs
-from feat_eng import feature_engineering_pipeline
-from generate_data import generate_securiteai_dataset
+from src.models.autoencoder import Autoencoder
+from src.processing.clean_log import clean_linux_logs
+from src.processing.feat_eng import feature_engineering_pipeline
+from src.utils.generate_data import generate_securiteai_dataset
 
 # ==========================================
 # 1. CONFIGURATION & PATHS
 # ==========================================
-MODEL_DIR = "models"
-MODEL_WEIGHTS = os.path.join(MODEL_DIR, "securiteai_model.pth")
-THRESHOLD_PATH = os.path.join(MODEL_DIR, "anomaly_threshold.npy")
-SCALER_PATH = os.path.join(MODEL_DIR, "scaler_params.npy")
-VISUAL_PATH = os.path.join("visualizations", "securiteai_visual_report.png")
+WEIGHTS_DIR = "../artifacts/weights"
+PARAMETERS_DIR = "../artifacts/parameters"
+VISUALIZATION_DIR = "../visualizations"
+MODEL_WEIGHTS = os.path.join(WEIGHTS_DIR, "securiteai_model.pth")
+THRESHOLD_PATH = os.path.join(PARAMETERS_DIR, "anomaly_threshold.npy")
+SCALER_PATH = os.path.join(PARAMETERS_DIR, "scaler_params.npy")
+LOSS_METRICS_PATH = os.path.join(PARAMETERS_DIR, "loss_metrics.npy")
+VISUAL_PATH = os.path.join(VISUALIZATION_DIR, "securiteai_visual_report.png")
 
 INPUT_DIM = 9  # 8 cyclical features + 1 normalized Event ID
 HIDDEN_DIM = 64

@@ -9,18 +9,19 @@ from contextlib import asynccontextmanager
 from prometheus_client import Counter, Histogram, make_asgi_app
 
 # Custom module imports
-from autoencoder import Autoencoder
-from clean_log import clean_linux_logs
-from feat_eng import feature_engineering_pipeline
+from src.models.autoencoder import Autoencoder
+from src.processing.clean_log import clean_linux_logs
+from src.processing.feat_eng import feature_engineering_pipeline
 
 # =================================================================
 # 1. CONFIGURATION & METRICS DEFINITION
 # =================================================================
-MODEL_DIR = "models"
-MODEL_WEIGHTS = os.path.join(MODEL_DIR, "securiteai_model.pth")
-THRESHOLD_PATH = os.path.join(MODEL_DIR, "anomaly_threshold.npy")
-SCALER_PATH = os.path.join(MODEL_DIR, "scaler_params.npy")
-LOSS_METRICS_PATH = os.path.join(MODEL_DIR, "loss_metrics.npy")
+WEIGHTS_DIR = "../artifacts/weights"
+PARAMETERS_DIR = "../artifacts/parameters"
+MODEL_WEIGHTS = os.path.join(WEIGHTS_DIR, "securiteai_model.pth")
+THRESHOLD_PATH = os.path.join(PARAMETERS_DIR, "anomaly_threshold.npy")
+SCALER_PATH = os.path.join(PARAMETERS_DIR, "scaler_params.npy")
+LOSS_METRICS_PATH = os.path.join(PARAMETERS_DIR, "loss_metrics.npy")
 
 INPUT_DIM = 9
 HIDDEN_DIM = 64

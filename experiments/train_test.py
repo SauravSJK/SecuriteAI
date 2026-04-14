@@ -1,21 +1,21 @@
 import os
-import shutil
 import torch
 import torch.nn as nn
 import numpy as np
 import random
 from torch.utils.data import DataLoader, TensorDataset
-from autoencoder import Autoencoder
-from clean_log import clean_linux_logs
-from feat_eng import feature_engineering_pipeline
-from generate_data import generate_securiteai_dataset
+from src.models.autoencoder import Autoencoder
+from src.processing.clean_log import clean_linux_logs
+from src.processing.feat_eng import feature_engineering_pipeline
+from src.utils.generate_data import generate_securiteai_dataset
 
 # Configuration
-MODEL_DIR = "models"
-WEIGHTS = os.path.join(MODEL_DIR, "securiteai_model.pth")
-THRESHOLD_FILE = os.path.join(MODEL_DIR, "anomaly_threshold.npy")
-SCALER_FILE = os.path.join(MODEL_DIR, "scaler_params.npy")
-LOSS_METRICS_FILE = os.path.join(MODEL_DIR, "loss_metrics.npy")
+WEIGHTS_DIR = "../artifacts/weights"
+PARAMETERS_DIR = "../artifacts/parameters"
+MODEL_WEIGHTS = os.path.join(WEIGHTS_DIR, "securiteai_model.pth")
+THRESHOLD_PATH = os.path.join(PARAMETERS_DIR, "anomaly_threshold.npy")
+SCALER_PATH = os.path.join(PARAMETERS_DIR, "scaler_params.npy")
+LOSS_METRICS_PATH = os.path.join(PARAMETERS_DIR, "loss_metrics.npy")
 
 N_EPOCHS = 100
 BATCH_SIZE = 64
@@ -50,10 +50,6 @@ def get_per_sequence_losses(
 
 
 def main():
-    if os.path.exists(MODEL_DIR):
-        shutil.rmtree(MODEL_DIR)
-    os.makedirs(MODEL_DIR)
-
     DEVICE = torch.device(
         "cuda"
         if torch.cuda.is_available()
@@ -73,10 +69,10 @@ def main():
     clean_anom = clean_linux_logs(anom_df)
 
     # Fit scaler ONLY on normal data
-    norm_windows = feature_engineering_pipeline(clean_norm, scaler_path=SCALER_FILE)
+    norm_windows = feature_engineering_pipeline(clean_norm, scaler_path=SCALER_PATH)
 
     # Apply saved scaler to anomaly data
-    s_params = np.load(SCALER_FILE)
+    s_params = np.load(SCALER_PATH)
     anom_windows = feature_engineering_pipeline(
         clean_anom, scaler_params=(s_params[0], s_params[1])
     )
@@ -141,9 +137,9 @@ def main():
     )
     print("=" * 45)
 
-    torch.save(model.state_dict(), WEIGHTS)
-    np.save(THRESHOLD_FILE, threshold)
-    np.save(LOSS_METRICS_FILE, np.array([norm_test_losses]))
+    torch.save(model.state_dict(), MODEL_WEIGHTS)
+    np.save(THRESHOLD_PATH, threshold)
+    np.save(LOSS_METRICS_PATH, np.array([norm_test_losses]))
 
 
 if __name__ == "__main__":
