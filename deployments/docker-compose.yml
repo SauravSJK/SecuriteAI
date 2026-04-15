@@ -1,4 +1,9 @@
 services:
+  # The Shared Brain (Distributed State)
+  redis:
+    image: redis:latest
+    # Default port 6379 is exposed internally to the docker network
+
   # The Load Balancer (The Traffic Controller)
   nginx:
     image: nginx:latest
@@ -14,10 +19,14 @@ services:
     build: 
       context: ..
       dockerfile: deployments/Dockerfile
+    environment:
+      - REDIS_HOST=redis
     volumes:
-      - ../artifacts:/app/artifacts  # Mounting the artifacts directory for model weights and parameters
+      - ../artifacts:/app/artifacts
     deploy:
-      replicas: 3  #Horizontal Scaling
+      replicas: 3
+    depends_on:
+      - redis
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/metrics"]
       interval: 30s

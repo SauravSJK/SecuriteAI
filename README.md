@@ -13,19 +13,24 @@
 
 ### 🧠 System Architecture & Engineering
 
-#### 1. Data Ingress & Validation
-Logs enter the system via a **FastAPI REST interface**. To ensure the integrity of the neural network's input dimensions, we utilize **Pydantic** to enforce a strict batch requirement of exactly **20 logs**. This prevents "partial window" errors and ensures consistent temporal context for every security verdict.
+#### 1. Real-Time Ingestion & Stateful Sliding Window
+Unlike traditional batch-processing systems, SecuriteAI utilizes a **Stateful Sliding Window** for real-time monitoring:
+* **The `/ingest` Endpoint:** The system accepts a continuous stream of individual logs.
+* **Distributed Buffer:** Logs are managed in an atomic Redis-backed buffer, ensuring that the 20-log "temporal context" is preserved even as logs are distributed across multiple container replicas.
+* **Dynamic Logic:** The system intelligently transitions from a "Buffering" state to an "Active Stream" state once the window is saturated.
 
-#### 2. The 95,000x SNR Innovation (Isolation Normalization)
+#### 2. Distributed State Management (Redis)
+To support horizontal scaling, SecuriteAI externalizes its "memory":
+* **Stateless Replicas:** Inference containers are completely stateless; any container can process any incoming log.
+* **Atomic Orchestration:** Using Redis `RPUSH` and `LTRIM` operations, the system maintains a consistent, ordered 20-log window across the entire cluster, solving the "split-stream" problem common in load-balanced environments.
+
+#### 3. The 95,000x SNR Innovation (Isolation Normalization)
 The system's extreme sensitivity is powered by a **"Poisoned Normalization"** strategy:
 * **The Logic:** The Min-Max scaler is fitted strictly on the "Normal" log pool (IDs 1-4).
-* **The Result:** When an anomaly ID (e.g., 999) enters the pipeline, it is mapped to a value of **~332.0**. The LSTM, which only expects inputs in the $[0, 1]$ range, experiences a **catastrophic reconstruction failure**. This mathematical "shock" creates a clear binary signal for security analysts.
+* **The Result:** When an anomaly ID (e.g., 999) enters the pipeline, it is mapped to an extreme value (e.g., ~332.0), causing a **catastrophic reconstruction failure** in the LSTM. This creates a clear, binary signal for security analysts.
 
-#### 3. Cyclical Temporal Features
+#### 4. Cyclical Temporal Features
 Time is a circle, not a line. **SecuriteAI** decomposes timestamps into **Sine and Cosine pairs** for Hours, Minutes, Seconds, and Days. This allows the model to understand that **23:59 is adjacent to 00:01**, preventing the "midnight cliff" problem that often causes false positives in standard linear models.
-
-#### 4. LSTM-Autoencoder Bottleneck
-The model forces a **180-dimensional input** (20 x 9 features) through a **64-dimensional latent bottleneck**. This compression compels the network to learn the underlying structure and patterns of system behavior rather than simply memorizing log entries.
 
 ---
 
@@ -37,19 +42,14 @@ In a production environment, "Normal" is a moving target. SecuriteAI includes mo
 * **Retraining:** New models are trained on the most recent 30-day "Normal" window and only deployed if they outperform the current model on the latest validation set.
 
 #### ⚡ Performance Optimizations
-* **FastAPI RAM Caching:** By utilizing the **lifespan manager**, model weights and scaler parameters are loaded into memory once at startup. This reduced per-prediction latency by 98% compared to traditional disk-based loading.
-* **Multi-Stage Docker Builds:** We separate the heavyweight build environment from the lean runtime container, significantly reducing the security attack surface and image size.
-
-#### 🪟 Window Size Justification
-A window size of **20 logs** was selected to balance Latency and Context:
-* **Smaller Windows:** Too sensitive to jitter; lack the memory to see multi-step lateral movement.
-* **Larger Windows:** Higher inference latency; attacks may finish before a verdict is reached.
-* **The Sweet Spot:** 20 logs provide 2-3 minutes of system context, catching brute-force bursts in near real-time.
+* **FastAPI RAM Caching:** By utilizing the **lifespan manager**, model weights and scaler parameters are loaded into memory once at startup, reducing per-prediction latency by 98%.
+* **Asynchronous I/O:** The system utilizes `redis.asyncio` to perform non-blocking state updates, ensuring high-throughput ingestion without stalling the event loop.
+* **Multi-Stage Docker Builds:** We separate the build environment from the lean runtime container, reducing the security attack surface.
 
 ---
 
 ### 🛠️ Deployment
-Using **Docker Compose**, you can launch a load-balanced cluster of inference containers:
+Using **Docker Compose**, you can launch a load-balanced cluster of inference containers integrated with a Redis state store:
 
 1.  **Initialize the Cluster:**
     ```bash
