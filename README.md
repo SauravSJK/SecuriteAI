@@ -25,7 +25,7 @@ The system's extreme sensitivity is powered by a **"Poisoned Normalization"** st
 Time is a circle, not a line. **SecuriteAI** decomposes timestamps into **Sine and Cosine pairs** for Hours, Minutes, Seconds, and Days. This allows the model to understand that **23:59 is adjacent to 00:01**, preventing the "midnight cliff" problem that often causes false positives in standard linear models.
 
 #### 4. LSTM-Autoencoder Bottleneck
-The model forces a **180-dimensional input** (20 \times 9 features) through a **64-dimensional latent bottleneck**. This compression compels the network to learn the underlying structure and patterns of system behavior rather than simply memorizing log entries.
+The model forces a **180-dimensional input** (20 x 9 features) through a **64-dimensional latent bottleneck**. This compression compels the network to learn the underlying structure and patterns of system behavior rather than simply memorizing log entries.
 
 ---
 
