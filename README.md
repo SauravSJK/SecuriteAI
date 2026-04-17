@@ -27,7 +27,7 @@ The system is engineered to detect two distinct classes of security threats:
 #### 3. The 348,000x SNR Innovation (Isolation Normalization)
 The system's extreme sensitivity is powered by a **"Poisoned Normalization"** strategy:
 * **The Logic:** The Min-Max scaler is fitted strictly on the "Normal" log pool (IDs 1-4).
-* **The Result:** When an anomaly ID (e.g., 999) enters the pipeline, it is mapped to an extreme value of **~332.0**. The LSTM, expecting inputs in the $[0, 1]$ range, experiences a **catastrophic reconstruction failure**.
+* **The Result:** When an anomaly ID (e.g., 999) enters the pipeline, it is mapped to an extreme value of **~332.0**. The LSTM, expecting inputs in the [0, 1] range, experiences a **catastrophic reconstruction failure**.
 
 #### 4. Cyclical Temporal Features
 Time is treated as a continuous circle, not a line. **SecuriteAI** decomposes timestamps into **Sine and Cosine pairs** for Hours, Minutes, Seconds, and Days. This ensures the model understands that **23:59 is adjacent to 00:01**, eliminating the "midnight cliff" problem that causes false positives in linear models.
