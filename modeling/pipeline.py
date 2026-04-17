@@ -1,17 +1,10 @@
 import os
-import sys
 import torch
 import torch.nn as nn
 import numpy as np
 import random
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, TensorDataset
-
-# --- PATH INJECTION FOR PARENT DIRECTORY IMPORTS ---
-# Ensures the script can find 'src/' even when run from the 'modeling/' subdirectory
-root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if root_path not in sys.path:
-    sys.path.insert(0, root_path)
 
 # SecuriteAI core component imports
 from src.models.autoencoder import Autoencoder
@@ -56,7 +49,7 @@ def get_per_sequence_losses(
     with torch.no_grad():
         for batch in loader:
             x = batch[0].to(device)
-            # Loss calculated over the 180-dimensional flattened window ($20 \times 9$)
+            # Loss calculated over the 180-dimensional flattened window (20 x 9)
             loss = criterion(model(x), x).mean(dim=(1, 2))
             losses.extend(loss.cpu().numpy())
     return np.array(losses)
