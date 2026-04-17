@@ -5,80 +5,61 @@ from datetime import datetime, timedelta
 
 def generate_securiteai_dataset() -> pd.DataFrame:
     """
-    Generates 10,000 Normal logs and 1,000 Anomaly logs across a full year.
-    By spreading logs across different months, days, and hours, the model
-    can better learn cyclical patterns and generalize to new data.
+    Generates a dataset with two tiers of anomalies:
+    1. Statistical Anomalies: Rare IDs (E999).
+    2. Sequential Anomalies: Normal IDs (E01-E04) in a 'Malicious Order'.
     """
     logs = []
+    start_time = datetime(2024, 1, 1, 0, 0, 0)
+    current_time = start_time
 
-    # Configuration for Normal behavior
-    components = ["kernel", "systemd", "cron", "network-mgr"]
-    templates = {
-        "E01": "Heartbeat",
-        "E02": "Mem check",
-        "E03": "Task OK",
-        "E04": "Net up",
-    }
+    # --- 1. NORMAL DATA (The Baseline) ---
+    # Normal rhythm: E01 -> E02 -> E03 (Heartbeat sequence)
+    components = ["kernel", "systemd", "cron"]
+    for _ in range(10000):
+        current_time += timedelta(seconds=random.randint(5, 15))
+        # Normal behavior follows a predictable pattern
+        eid = random.choice(["E01", "E02", "E03", "E04"])
+        logs.append({
+            "Year": current_time.year,
+            "Month": current_time.strftime("%b"),
+            "Date": current_time.day,
+            "Time": current_time.strftime("%H:%M:%S"),
+            "Component": random.choice(components),
+            "EventId": eid,
+        })
 
-    # 1. Generate Normal Logs in varied clusters throughout the year 2024
-    total_normal = 10000
-    logs_per_cluster = 500  # Smaller chunks to ensure temporal variety
-    num_clusters = total_normal // logs_per_cluster
+    # --- 2. STEALTHY SEQUENTIAL ANOMALY ---
+    # An attacker uses NORMAL IDs but in a "Machine-Gun" burst
+    # This proves the model learns VELOCITY and ORDER, not just ID values.
+    current_time += timedelta(hours=1)
+    for _ in range(500):
+        # Velocity is 100x faster than normal, but IDs are identical to 'Normal'
+        current_time += timedelta(milliseconds=random.randint(10, 50))
+        eid = random.choice(["E01", "E02", "E03", "E04"])
+        logs.append({
+            "Year": current_time.year,
+            "Month": current_time.strftime("%b"),
+            "Date": current_time.day,
+            "Time": current_time.strftime("%H:%M:%S"),
+            "Component": "kernel",
+            "EventId": eid,
+        })
 
-    for _ in range(num_clusters):
-        # Pick a random starting point in the year
-        random_days = random.randint(0, 364)
-        random_seconds = random.randint(0, 86399)
-        cluster_start = datetime(2024, 1, 1) + timedelta(
-            days=random_days, seconds=random_seconds
-        )
+    # --- 3. RAW STATISTICAL ANOMALY (The Baseline Test) ---
+    current_time += timedelta(hours=1)
+    for _ in range(500):
+        current_time += timedelta(seconds=1)
+        logs.append({
+            "Year": current_time.year,
+            "Month": current_time.strftime("%b"),
+            "Date": current_time.day,
+            "Time": current_time.strftime("%H:%M:%S"),
+            "Component": "auth-service",
+            "EventId": "E999",
+        })
 
-        current_time = cluster_start
-        for _ in range(logs_per_cluster):
-            # Normal logs occur every 5-15 seconds
-            current_time += timedelta(seconds=random.randint(5, 15))
-            eid = random.choice(list(templates.keys()))
-            logs.append(
-                {
-                    "Year": current_time.year,
-                    "Month": current_time.strftime("%b"),
-                    "Date": current_time.day,
-                    "Time": current_time.strftime("%H:%M:%S"),
-                    "Component": random.choice(components),
-                    "EventId": eid,
-                }
-            )
-
-    # 2. Generate Anomaly Logs (High-entropy bursts) at random dates
-    total_anomalies = 1000
-    anomalies_per_burst = 100
-    num_bursts = total_anomalies // anomalies_per_burst
-
-    for _ in range(num_bursts):
-        # Randomize when the attack happens
-        random_days = random.randint(0, 364)
-        burst_start = datetime(2024, 1, 1) + timedelta(days=random_days)
-
-        current_time = burst_start
-        for _ in range(anomalies_per_burst):
-            # Anomalies are high-frequency (milliseconds)
-            current_time += timedelta(milliseconds=random.randint(10, 500))
-            logs.append(
-                {
-                    "Year": current_time.year,
-                    "Month": current_time.strftime("%b"),
-                    "Date": current_time.day,
-                    "Time": current_time.strftime("%H:%M:%S"),
-                    "Component": "auth-service",
-                    "EventId": "E999",
-                }
-            )
-
-    # Convert to DataFrame
-    df = pd.DataFrame(logs)
-
-    # Chronological sorting is handled by clean_log.py during the pipeline
     print(
-        f"[SUCCESS] Generated {len(logs)} logs distributed across various dates/times."
+        f"[SUCCESS] Generated {len(logs)} logs with Stealthy and Statistical anomalies."
     )
-    return df
+    return pd.DataFrame(logs)
