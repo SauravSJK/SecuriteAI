@@ -84,24 +84,17 @@ model_artifacts = {}
 
 
 # =================================================================
-# 2. LIFESPAN MANAGEMENT (Resource Caching)
+# 2. ARTIFACT LOADING HELPER
 # =================================================================
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+async def load_model_artifacts():
     """
-    Handles application lifecycle, ensuring heavy model weights and
-    scaler parameters are cached in RAM to minimize per-request latency.
+    Centralized logic to load model weights and parameters into RAM.
+    This allows for both initial startup and 'Live Reloads'.
     """
-    print("[*] Initializing Production Inference Engine...")
+    print("[*] Synchronizing model artifacts with RAM...")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     try:
-        # Ensure feedback directory exists for asynchronous feedback logging
-        os.makedirs(FEEDBACK_DIR, exist_ok=True)
-
-        # Clear Redis buffer on startup to ensure a clean state
-        await redis_client.delete(BUFFER_KEY)
-
         # Load Model Architecture and Weights
         model = Autoencoder(INPUT_DIM, HIDDEN_DIM, WINDOW_SIZE).to(device)
         model.load_state_dict(torch.load(MODEL_WEIGHTS, map_location=device))
@@ -118,22 +111,48 @@ async def lifespan(app: FastAPI):
         print("[*] Loading Semantic Encoder (all-MiniLM-L6-v2)...")
         nlp_model = SentenceTransformer("all-MiniLM-L6-v2", device=str(device))
 
-        # Cache artifacts in global state for zero-I/O access
-        model_artifacts["model"] = model
-        model_artifacts["threshold"] = float(threshold)
-        model_artifacts["scaler"] = scaler
-        model_artifacts["device"] = device
-        model_artifacts["stats"] = {
-            "mean": np.mean(loss_metrics),
-            "std": np.std(loss_metrics),
-        }
-        model_artifacts["nlp_model"] = nlp_model
-
-        print(f"[*] Success: Model loaded on {device}. Threshold: {threshold:.4f}")
-
+        # Update global state atomically
+        model_artifacts.update({
+            "model": model,
+            "threshold": float(threshold),
+            "scaler": scaler,
+            "device": device,
+            "stats": {
+                "mean": np.mean(loss_metrics),
+                "std": np.std(loss_metrics),
+            },
+            "nlp_model": nlp_model,
+        })
+        print(
+            f"[*] Success: Model synchronized on {device}. Threshold: {threshold:.4f}"
+        )
+        return True
     except Exception as e:
-        print(f"[!] Initialization Failure: {e}")
-        raise e
+        print(f"[!] Artifact Sync Failure: {e}")
+        return False
+
+
+# =================================================================
+# 3. LIFESPAN MANAGEMENT (Resource Caching)
+# =================================================================
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Handles application lifecycle, ensuring heavy model weights and
+    scaler parameters are cached in RAM to minimize per-request latency.
+    """
+    print("[*] Initializing Production Inference Engine...")
+
+    # Ensure feedback directory exists
+    os.makedirs(FEEDBACK_DIR, exist_ok=True)
+
+    # Clear Redis buffer on startup to ensure a clean state
+    await redis_client.delete(BUFFER_KEY)
+
+    # Initial load of all artifacts
+    success = await load_model_artifacts()
+    if not success:
+        raise RuntimeError("Failed to initialize model artifacts on startup.")
 
     yield
     # Cleanup on shutdown
@@ -148,13 +167,10 @@ app.mount("/metrics", metrics_app)
 
 
 # =================================================================
-# 3. ASYNCHRONOUS SECURITY ALERTING
+# 4. ASYNC UTILITIES
 # =================================================================
 async def send_security_notification(mse: float, risk: str):
-    """
-    Simulated security webhook. In production, this would dispatch to
-    PagerDuty, Slack, or an enterprise SIEM.
-    """
+    """Simulated security alert dispatch."""
     alert_payload = {
         "event": "ANOMALY_ALERT",
         "risk_level": risk,
@@ -164,11 +180,8 @@ async def send_security_notification(mse: float, risk: str):
     print(f"[SECURITY NOTIFICATION] Incident Logged: {alert_payload}")
 
 
-# =================================================================
-# 4. FEEDBACK PERSISTENCE (Asynchronous I/O)
-# =================================================================
 def save_feedback_to_disk(feedback_data: dict):
-    """Offloads blocking I/O to a background thread to maintain API responsiveness."""
+    """Offloads disk I/O for auditor feedback."""
     timestamp = int(time.time())
     file_path = os.path.join(FEEDBACK_DIR, f"feedback_{timestamp}.json")
     with open(file_path, "w") as f:
@@ -219,26 +232,21 @@ class FeedbackRequest(BaseModel):
 
 
 # =================================================================
-# 6. INGESTION ENDPOINT (The Async Stream)
+# 6. ENDPOINTS
 # =================================================================
+
+
 @app.post("/ingest")
 async def ingest_log(entry: LogEntry, background_tasks: BackgroundTasks):
     """
     Analyzes a log stream using an atomic sliding window in Redis.
-    Transitions to active inference once 20 logs are in the buffer.
     """
     try:
         LOG_INGEST_COUNTER.inc()
-
-        # 1. Update Distributed State (Asynchronous)
-        # Push new log to Redis and maintain a fixed window size of 20
         await redis_client.rpush(BUFFER_KEY, json.dumps(entry.model_dump()))  # type: ignore
         await redis_client.ltrim(BUFFER_KEY, -WINDOW_SIZE, -1)  # type: ignore
-
-        # 'await' unwraps the coroutine into a concrete 'int' for comparison
         current_depth = await redis_client.llen(BUFFER_KEY)  # type: ignore
 
-        # 2. Dynamic Logic: Phase 1 (Warm-up / Buffering)
         if current_depth < WINDOW_SIZE:
             return {
                 "status": "BUFFERING",
@@ -246,14 +254,10 @@ async def ingest_log(entry: LogEntry, background_tasks: BackgroundTasks):
                 "current_depth": f"{current_depth}/{WINDOW_SIZE}",
             }
 
-        # 3. Dynamic Logic: Phase 2 (Active Inference)
         PREDICTION_COUNTER.inc()
-
-        # Retrieve the current sliding window from Redis asynchronously
         raw_window = await redis_client.lrange(BUFFER_KEY, 0, -1)  # type: ignore
         log_window = [json.loads(log) for log in raw_window]
 
-        # Transform window into model-ready features
         df = pd.DataFrame(log_window)
         cleaned_df = clean_linux_logs(df)
 
@@ -265,9 +269,7 @@ async def ingest_log(entry: LogEntry, background_tasks: BackgroundTasks):
             model=model_artifacts["nlp_model"],
         )
 
-        # 4. Neural Network Inference
-        device = model_artifacts["device"]
-        model = model_artifacts["model"]
+        device, model = model_artifacts["device"], model_artifacts["model"]
         input_tensor = torch.tensor(features).float().to(device)
 
         with torch.no_grad():
@@ -279,21 +281,18 @@ async def ingest_log(entry: LogEntry, background_tasks: BackgroundTasks):
                 .item()
             )
 
-        # 5. Statistical Risk Assessment (Z-Score)
         mu, sigma = model_artifacts["stats"]["mean"], model_artifacts["stats"]["std"]
         z_score = (mse_score - mu) / sigma
+        severity = (
+            "Critical"
+            if z_score >= 10
+            else "High"
+            if z_score >= 5
+            else "Medium"
+            if z_score >= 2
+            else "Low"
+        )
 
-        # Risk Mapping Logic based on deviation from training mean
-        if z_score < 2:
-            severity = "Low"
-        elif 2 <= z_score < 5:
-            severity = "Medium"
-        elif 5 <= z_score < 10:
-            severity = "High"
-        else:
-            severity = "Critical"
-
-        # 6. Telemetry and Asynchronous Alerting
         is_anomaly = mse_score > model_artifacts["threshold"]
         MSE_HISTOGRAM.observe(mse_score)
 
@@ -307,26 +306,36 @@ async def ingest_log(entry: LogEntry, background_tasks: BackgroundTasks):
             "risk": {"z_score": round(float(z_score), 4), "severity": severity},
             "mse": float(mse_score),
         }
-
     except Exception as e:
-        # Standardize error response for distributed observability
         raise HTTPException(status_code=500, detail=f"Streaming Error: {str(e)}")
 
 
-# =================================================================
-# 7. FEEDBACK ENDPOINT (The Async Feedback Stream)
-# =================================================================
 @app.post("/feedback")
 async def provide_feedback(
     feedback: FeedbackRequest, background_tasks: BackgroundTasks
 ):
-    """
-    Accepts auditor feedback via background tasks to prevent event-loop blocking.
-    """
+    """Accepts auditor feedback via background tasks."""
     try:
-        # Schedule the disk write as a background task
         background_tasks.add_task(save_feedback_to_disk, feedback.model_dump())
-
         return {"status": "FEEDBACK_QUEUED_FOR_RETRAINING"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Feedback Queue Error: {str(e)}")
+
+
+@app.post("/reload")
+async def reload_model():
+    """
+    Triggers a live reload of model weights and parameters.
+    Required for promoting a 'Challenger' model after automated retraining.
+    """
+    success = await load_model_artifacts()
+    if success:
+        return {
+            "status": "SUCCESS",
+            "message": "Production model artifacts reloaded successfully.",
+        }
+    else:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to reload model artifacts. Check server logs.",
+        )
