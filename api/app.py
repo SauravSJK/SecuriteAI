@@ -44,6 +44,7 @@ warnings.simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
 # Path configuration for model weights and baseline metrics
 WEIGHTS_DIR = "artifacts/weights"
 PARAMETERS_DIR = "artifacts/parameters"
+FEEDBACK_DIR = "artifacts/feedback"
 MODEL_WEIGHTS = os.path.join(WEIGHTS_DIR, "securiteai_model.pth")
 THRESHOLD_PATH = os.path.join(PARAMETERS_DIR, "anomaly_threshold.npy")
 SCALER_PATH = os.path.join(PARAMETERS_DIR, "scaler_params.npy")
@@ -61,7 +62,6 @@ REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 # Explicitly type hint the client to satisfy strict Pylance checking
 redis_client: Redis = Redis(host=REDIS_HOST, port=6379, db=0, decode_responses=True)
 BUFFER_KEY = "securiteai_sliding_window"
-redis_client.delete(BUFFER_KEY)  # Clear any existing state on startup
 
 # Operational Telemetry for Prometheus/Grafana monitoring
 MSE_HISTOGRAM = Histogram(
@@ -96,6 +96,12 @@ async def lifespan(app: FastAPI):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     try:
+        # Ensure feedback directory exists for asynchronous feedback logging
+        os.makedirs(FEEDBACK_DIR, exist_ok=True)
+
+        # Clear Redis buffer on startup to ensure a clean state
+        await redis_client.delete(BUFFER_KEY)
+
         # Load Model Architecture and Weights
         model = Autoencoder(INPUT_DIM, HIDDEN_DIM, WINDOW_SIZE).to(device)
         model.load_state_dict(torch.load(MODEL_WEIGHTS, map_location=device))
@@ -159,7 +165,18 @@ async def send_security_notification(mse: float, risk: str):
 
 
 # =================================================================
-# 4. DATA VALIDATION (Pydantic Schema)
+# 4. FEEDBACK PERSISTENCE (Asynchronous I/O)
+# =================================================================
+def save_feedback_to_disk(feedback_data: dict):
+    """Offloads blocking I/O to a background thread to maintain API responsiveness."""
+    timestamp = int(time.time())
+    file_path = os.path.join(FEEDBACK_DIR, f"feedback_{timestamp}.json")
+    with open(file_path, "w") as f:
+        json.dump(feedback_data, f, indent=4)
+
+
+# =================================================================
+# 5. DATA VALIDATION (Pydantic Schema)
 # =================================================================
 class LogEntry(BaseModel):
     Year: int = Field(
@@ -192,8 +209,17 @@ class LogEntry(BaseModel):
     )
 
 
+class FeedbackRequest(BaseModel):
+    logs: list[LogEntry] = Field(
+        ...,
+        description="List of log entries for feedback",
+        min_length=20,
+        max_length=20,
+    )
+
+
 # =================================================================
-# 5. INGESTION ENDPOINT (The Async Stream)
+# 6. INGESTION ENDPOINT (The Async Stream)
 # =================================================================
 @app.post("/ingest")
 async def ingest_log(entry: LogEntry, background_tasks: BackgroundTasks):
@@ -285,3 +311,22 @@ async def ingest_log(entry: LogEntry, background_tasks: BackgroundTasks):
     except Exception as e:
         # Standardize error response for distributed observability
         raise HTTPException(status_code=500, detail=f"Streaming Error: {str(e)}")
+
+
+# =================================================================
+# 7. FEEDBACK ENDPOINT (The Async Feedback Stream)
+# =================================================================
+@app.post("/feedback")
+async def provide_feedback(
+    feedback: FeedbackRequest, background_tasks: BackgroundTasks
+):
+    """
+    Accepts auditor feedback via background tasks to prevent event-loop blocking.
+    """
+    try:
+        # Schedule the disk write as a background task
+        background_tasks.add_task(save_feedback_to_disk, feedback.model_dump())
+
+        return {"status": "FEEDBACK_QUEUED_FOR_RETRAINING"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Feedback Queue Error: {str(e)}")
