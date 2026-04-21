@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 import numpy as np
 import os
 import pandas as pd
+from sentence_transformers import SentenceTransformer
 import torch
 import time
 import json
@@ -20,6 +21,21 @@ from prometheus_client import Counter, Histogram, make_asgi_app
 from src.models.autoencoder import Autoencoder
 from src.processing.clean_log import clean_linux_logs
 from src.processing.feat_eng import feature_engineering_pipeline
+
+# Hugging Face & SentenceTransformer warnings can be verbose; we will suppress them for cleaner output
+import warnings
+import logging
+
+# 1. Silence Hugging Face & Tokenizer warnings
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+
+# 2. Suppress library-specific loggers
+logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
+logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
+
+# 3. Suppress the specific Pandas PerformanceWarning
+warnings.simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
 
 # =================================================================
 # 1. CONFIGURATION & REDIS INITIALIZATION
@@ -34,8 +50,10 @@ SCALER_PATH = os.path.join(PARAMETERS_DIR, "scaler_params.npy")
 LOSS_METRICS_PATH = os.path.join(PARAMETERS_DIR, "loss_metrics.npy")
 
 # Model dimensions matching the trained LSTM-Autoencoder
-INPUT_DIM = 9  # 8 cyclical features + 1 normalized Event ID
-HIDDEN_DIM = 64
+INPUT_DIM = (
+    9 + 384
+)  # 8 cyclical features + 1 normalized Event ID + 384 embedding dimensions
+HIDDEN_DIM = 128
 WINDOW_SIZE = 20
 
 # Distributed State: Redis ensures continuity across multiple container replicas
@@ -43,6 +61,7 @@ REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 # Explicitly type hint the client to satisfy strict Pylance checking
 redis_client: Redis = Redis(host=REDIS_HOST, port=6379, db=0, decode_responses=True)
 BUFFER_KEY = "securiteai_sliding_window"
+redis_client.delete(BUFFER_KEY)  # Clear any existing state on startup
 
 # Operational Telemetry for Prometheus/Grafana monitoring
 MSE_HISTOGRAM = Histogram(
@@ -89,6 +108,10 @@ async def lifespan(app: FastAPI):
         # Load training loss distribution for real-time Z-score calculation
         loss_metrics = np.load(LOSS_METRICS_PATH)
 
+        # Load NLP Encoder ONCE and cache it
+        print("[*] Loading Semantic Encoder (all-MiniLM-L6-v2)...")
+        nlp_model = SentenceTransformer("all-MiniLM-L6-v2", device=str(device))
+
         # Cache artifacts in global state for zero-I/O access
         model_artifacts["model"] = model
         model_artifacts["threshold"] = float(threshold)
@@ -98,6 +121,7 @@ async def lifespan(app: FastAPI):
             "mean": np.mean(loss_metrics),
             "std": np.std(loss_metrics),
         }
+        model_artifacts["nlp_model"] = nlp_model
 
         print(f"[*] Success: Model loaded on {device}. Threshold: {threshold:.4f}")
 
@@ -159,6 +183,13 @@ class LogEntry(BaseModel):
         description="Event ID from the log entry",
         examples=["E02"],
     )
+    Content: str = Field(
+        ...,
+        min_length=1,
+        max_length=1024,
+        description="Unstructured content of the log entry",
+        examples=["Started User Manager for UID 1000"],
+    )
 
 
 # =================================================================
@@ -205,6 +236,7 @@ async def ingest_log(entry: LogEntry, background_tasks: BackgroundTasks):
             cleaned_df,
             window_size=WINDOW_SIZE,
             scaler_params=(s_params[0], s_params[1]),
+            model=model_artifacts["nlp_model"],
         )
 
         # 4. Neural Network Inference

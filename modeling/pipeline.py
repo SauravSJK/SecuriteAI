@@ -1,4 +1,5 @@
 import os
+from turtle import pd
 import torch
 import torch.nn as nn
 import numpy as np
@@ -11,6 +12,21 @@ from src.models.autoencoder import Autoencoder
 from src.processing.clean_log import clean_linux_logs
 from src.processing.feat_eng import feature_engineering_pipeline
 from src.utils.generate_data import generate_securiteai_dataset
+
+# Hugging Face & SentenceTransformer warnings can be verbose; we will suppress them for cleaner output
+import warnings
+import logging
+
+# 1. Silence Hugging Face & Tokenizer warnings
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+
+# 2. Suppress library-specific loggers
+logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
+logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
+
+# 3. Suppress the specific Pandas PerformanceWarning
+warnings.simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
 
 # =================================================================
 # 1. CONFIGURATION & HYPERPARAMETERS
@@ -28,8 +44,10 @@ VISUAL_PATH = os.path.join(VISUALIZATION_DIR, "securiteai_visual_report.png")
 # Architecture and Training Config
 N_EPOCHS = 100
 BATCH_SIZE = 64
-INPUT_DIM = 9  # 8 cyclical features + 1 normalized Event ID
-HIDDEN_DIM = 64
+INPUT_DIM = (
+    9 + 384
+)  # 8 cyclical features + 1 normalized Event ID + 384 embedding dimensions
+HIDDEN_DIM = 128
 WINDOW_SIZE = 20
 LEARNING_RATE = 1e-3
 

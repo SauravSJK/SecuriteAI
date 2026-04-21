@@ -22,7 +22,7 @@ def clean_linux_logs(input_df: pd.DataFrame) -> pd.DataFrame:
         df["Event_ID"] = df["EventId"].str.extract(r"(\d+)").astype(int)
 
         # Select core features and sort to maintain temporal integrity
-        cleaned_df = df[["Timestamp", "Component", "Event_ID"]]
+        cleaned_df = df[["Timestamp", "Component", "Event_ID", "Content"]]
         cleaned_df = cleaned_df.sort_values(by="Timestamp").reset_index(drop=True)
 
         return cleaned_df
