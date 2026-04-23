@@ -1,7 +1,8 @@
 """
 SecuriteAI: Enterprise Anomaly Detection API
 Description: A distributed, high-throughput inference engine for Linux log analysis.
-Utilizes an LSTM-Autoencoder to detect security threats via reconstruction error.
+Utilizes an LSTM-Autoencoder to detect security threats via reconstruction error,
+supplemented by long-term density analysis for stealth attack detection.
 """
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
@@ -13,7 +14,7 @@ from sentence_transformers import SentenceTransformer
 import torch
 import time
 import json
-from redis.asyncio import Redis  # Explicit async import to resolve Pylance issues
+from redis.asyncio import Redis
 from contextlib import asynccontextmanager
 from prometheus_client import Counter, Histogram, make_asgi_app
 
@@ -51,35 +52,38 @@ SCALER_PATH = os.path.join(PARAMETERS_DIR, "scaler_params.npy")
 LOSS_METRICS_PATH = os.path.join(PARAMETERS_DIR, "loss_metrics.npy")
 
 # Model dimensions matching the trained LSTM-Autoencoder
-INPUT_DIM = (
-    9 + 384
-)  # 8 cyclical features + 1 normalized Event ID + 384 embedding dimensions
+INPUT_DIM = 9 + 384  # 8 cyclical + 1 normalized Event ID + 384 embedding dims
 HIDDEN_DIM = 128
 WINDOW_SIZE = 20
+LONG_WINDOW_SIZE = 1000  # Threshold for 'Slow Walk' defense
 
-# Distributed State: Redis ensures continuity across multiple container replicas
+# Distributed State Management via Redis
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-# Explicitly type hint the client to satisfy strict Pylance checking
 redis_client: Redis = Redis(host=REDIS_HOST, port=6379, db=0, decode_responses=True)
-BUFFER_KEY = "securiteai_sliding_window"
 
-# Operational Telemetry for Prometheus/Grafana monitoring
+# Redis Keys for various data streams
+BUFFER_KEY = "securiteai_sliding_window"
+ANOMALY_HISTORY_KEY = "securiteai_anomaly_hits"  # Tracks long-term hit frequency
+RECENT_ANOMALIES_KEY = "securiteai_recent_anomalies"  # Data hook for Dashboard Explorer
+MSE_STREAM_KEY = "securiteai_mse_stream"  # Stream of MSE scores for dashboard heartbeat
+
+# Operational Telemetry for Prometheus monitoring
 MSE_HISTOGRAM = Histogram(
     "securiteai_mse_reconstruction_error",
-    "Distribution of reconstruction MSE scores across incoming requests",
+    "Distribution of reconstruction MSE scores",
     buckets=[0.01, 0.05, 0.1, 0.138, 0.2, 0.5, 1.0, 5.0],
 )
 ANOMALY_COUNTER = Counter(
-    "securiteai_anomalies_total", "Running count of detected security anomalies"
+    "securiteai_anomalies_total", "Count of detected security anomalies"
 )
 PREDICTION_COUNTER = Counter(
-    "securiteai_predictions_total", "Total volume of processed log windows"
+    "securiteai_predictions_total", "Total processed log windows"
 )
 LOG_INGEST_COUNTER = Counter(
-    "securiteai_logs_ingested_total", "Total volume of raw logs hitting the system"
+    "securiteai_logs_ingested_total", "Total ingested raw logs"
 )
 
-# Global container for model artifacts and statistical baselines
+# Global container for model artifacts
 model_artifacts = {}
 
 
@@ -88,30 +92,28 @@ model_artifacts = {}
 # =================================================================
 async def load_model_artifacts():
     """
-    Centralized logic to load model weights and parameters into RAM.
-    This allows for both initial startup and 'Live Reloads'.
+    Centralized logic to load or refresh model weights and baseline metrics.
+    Refactoring this allows for seamless 'Live Reloads'.
     """
     print("[*] Synchronizing model artifacts with RAM...")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     try:
-        # Load Model Architecture and Weights
+        # Initialize and load weights for the LSTM-Autoencoder
         model = Autoencoder(INPUT_DIM, HIDDEN_DIM, WINDOW_SIZE).to(device)
         model.load_state_dict(torch.load(MODEL_WEIGHTS, map_location=device))
         model.eval()
 
-        # Load Thresholds and Scaling Parameters
+        # Load statistical thresholds and scaling parameters
         threshold = np.load(THRESHOLD_PATH)
         scaler = np.load(SCALER_PATH)
-
-        # Load training loss distribution for real-time Z-score calculation
         loss_metrics = np.load(LOSS_METRICS_PATH)
 
-        # Load NLP Encoder ONCE and cache it
+        # Initialize the NLP Semantic Encoder
         print("[*] Loading Semantic Encoder (all-MiniLM-L6-v2)...")
         nlp_model = SentenceTransformer("all-MiniLM-L6-v2", device=str(device))
 
-        # Update global state atomically
+        # Atomic update of the global state
         model_artifacts.update({
             "model": model,
             "threshold": float(threshold),
@@ -133,35 +135,27 @@ async def load_model_artifacts():
 
 
 # =================================================================
-# 3. LIFESPAN MANAGEMENT (Resource Caching)
+# 3. LIFESPAN MANAGEMENT
 # =================================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Handles application lifecycle, ensuring heavy model weights and
-    scaler parameters are cached in RAM to minimize per-request latency.
-    """
+    """Handles resource caching and directory preparation on startup."""
     print("[*] Initializing Production Inference Engine...")
-
-    # Ensure feedback directory exists
     os.makedirs(FEEDBACK_DIR, exist_ok=True)
 
-    # Clear Redis buffer on startup to ensure a clean state
+    # Clear the Redis state to prevent temporal pollution on restart
     await redis_client.delete(BUFFER_KEY)
+    await redis_client.delete(ANOMALY_HISTORY_KEY)
 
-    # Initial load of all artifacts
-    success = await load_model_artifacts()
-    if not success:
+    # Initial load of artifacts
+    if not await load_model_artifacts():
         raise RuntimeError("Failed to initialize model artifacts on startup.")
 
     yield
-    # Cleanup on shutdown
     model_artifacts.clear()
 
 
 app = FastAPI(title="SecuriteAI Enterprise API", lifespan=lifespan)
-
-# Expose metrics endpoint for Prometheus scraping
 metrics_app = make_asgi_app()
 app.mount("/metrics", metrics_app)
 
@@ -170,18 +164,12 @@ app.mount("/metrics", metrics_app)
 # 4. ASYNC UTILITIES
 # =================================================================
 async def send_security_notification(mse: float, risk: str):
-    """Simulated security alert dispatch."""
-    alert_payload = {
-        "event": "ANOMALY_ALERT",
-        "risk_level": risk,
-        "reconstruction_mse": round(mse, 6),
-        "timestamp": time.time(),
-    }
-    print(f"[SECURITY NOTIFICATION] Incident Logged: {alert_payload}")
+    """Dispatches a simulated security alert webhook."""
+    print(f"[SECURITY NOTIFICATION] Incident Logged: {risk} Risk (MSE: {mse:.6f})")
 
 
 def save_feedback_to_disk(feedback_data: dict):
-    """Offloads disk I/O for auditor feedback."""
+    """Offloads blocking disk I/O for auditor feedback."""
     timestamp = int(time.time())
     file_path = os.path.join(FEEDBACK_DIR, f"feedback_{timestamp}.json")
     with open(file_path, "w") as f:
@@ -189,46 +177,29 @@ def save_feedback_to_disk(feedback_data: dict):
 
 
 # =================================================================
-# 5. DATA VALIDATION (Pydantic Schema)
+# 5. DATA VALIDATION (Pydantic Schemas)
 # =================================================================
 class LogEntry(BaseModel):
-    Year: int = Field(
-        ..., ge=2000, le=2100, description="Year of the log entry", examples=[2024]
-    )
+    Year: int = Field(..., ge=2000, le=2100, examples=[2024])
     Month: str = Field(
         ...,
         pattern="^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)$",
-        description="Month of the log entry",
         examples=["Jan"],
     )
-    Date: int = Field(
-        ..., ge=1, le=31, description="Day of the log entry", examples=[15]
-    )
-    Time: str = Field(..., description="Time of the log entry", examples=["14:23:45"])
-    Component: str = Field(..., description="Component from the log entry")
-    EventId: str = Field(
-        ...,
-        min_length=1,
-        max_length=255,
-        description="Event ID from the log entry",
-        examples=["E02"],
-    )
+    Date: int = Field(..., ge=1, le=31, examples=[15])
+    Time: str = Field(..., examples=["14:23:45"])
+    Component: str = Field(...)
+    EventId: str = Field(..., min_length=1, max_length=255, examples=["E02"])
     Content: str = Field(
         ...,
         min_length=1,
         max_length=1024,
-        description="Unstructured content of the log entry",
         examples=["Started User Manager for UID 1000"],
     )
 
 
 class FeedbackRequest(BaseModel):
-    logs: list[LogEntry] = Field(
-        ...,
-        description="List of log entries for feedback",
-        min_length=20,
-        max_length=20,
-    )
+    logs: list[LogEntry] = Field(..., min_length=20, max_length=20)
 
 
 # =================================================================
@@ -239,31 +210,32 @@ class FeedbackRequest(BaseModel):
 @app.post("/ingest")
 async def ingest_log(entry: LogEntry, background_tasks: BackgroundTasks):
     """
-    Analyzes a log stream using an atomic sliding window in Redis.
+    Performs dual-scale analysis:
+    1. Short-term Burst Detection (20 logs).
+    2. Long-term Anomaly Density Analysis (1000 logs) to catch 'Slow-Walk' attacks.
     """
     try:
         LOG_INGEST_COUNTER.inc()
+
+        # Maintain a long-term buffer of 1000 logs for multi-scale analysis
         await redis_client.rpush(BUFFER_KEY, json.dumps(entry.model_dump()))  # type: ignore
-        await redis_client.ltrim(BUFFER_KEY, -WINDOW_SIZE, -1)  # type: ignore
+        await redis_client.ltrim(BUFFER_KEY, -LONG_WINDOW_SIZE, -1)  # type: ignore
         current_depth = await redis_client.llen(BUFFER_KEY)  # type: ignore
 
         if current_depth < WINDOW_SIZE:
             return {
                 "status": "BUFFERING",
-                "logs_required": WINDOW_SIZE - current_depth,
                 "current_depth": f"{current_depth}/{WINDOW_SIZE}",
             }
 
-        PREDICTION_COUNTER.inc()
-        raw_window = await redis_client.lrange(BUFFER_KEY, 0, -1)  # type: ignore
+        # --- PHASE 1: SHORT-TERM INFERENCE (20 Logs) ---
+        raw_window = await redis_client.lrange(BUFFER_KEY, -WINDOW_SIZE, -1)  # type: ignore
         log_window = [json.loads(log) for log in raw_window]
 
         df = pd.DataFrame(log_window)
-        cleaned_df = clean_linux_logs(df)
-
         s_params = model_artifacts["scaler"]
         features = feature_engineering_pipeline(
-            cleaned_df,
+            clean_linux_logs(df),
             window_size=WINDOW_SIZE,
             scaler_params=(s_params[0], s_params[1]),
             model=model_artifacts["nlp_model"],
@@ -281,6 +253,11 @@ async def ingest_log(entry: LogEntry, background_tasks: BackgroundTasks):
                 .item()
             )
 
+        # Push every MSE to a dedicated stream for the dashboard heartbeat
+        await redis_client.lpush(MSE_STREAM_KEY, str(mse_score))  # type: ignore
+        await redis_client.ltrim(MSE_STREAM_KEY, 0, 49)  # type: ignore # Keep the last 50 points
+
+        # Statistical Risk Mapping (Z-Score)
         mu, sigma = model_artifacts["stats"]["mean"], model_artifacts["stats"]["std"]
         z_score = (mse_score - mu) / sigma
         severity = (
@@ -292,17 +269,45 @@ async def ingest_log(entry: LogEntry, background_tasks: BackgroundTasks):
             if z_score >= 2
             else "Low"
         )
-
         is_anomaly = mse_score > model_artifacts["threshold"]
-        MSE_HISTOGRAM.observe(mse_score)
 
-        if is_anomaly:
+        # --- PHASE 2: LONG-TERM DENSITY DEFENSE (Wednesday) ---
+        # Track hit history over the last 1000 entries
+        await redis_client.rpush(ANOMALY_HISTORY_KEY, 1 if is_anomaly else 0)  # type: ignore
+        await redis_client.ltrim(ANOMALY_HISTORY_KEY, -LONG_WINDOW_SIZE, -1)  # type: ignore
+
+        history = await redis_client.lrange(ANOMALY_HISTORY_KEY, 0, -1)  # type: ignore
+        anomaly_density = sum([int(h) for h in history]) / len(history)
+
+        # Trigger 'Slow Walk' alert if anomaly density exceeds 2.5%
+        is_slow_walk = anomaly_density > 0.025
+
+        # --- PHASE 3: DASHBOARD HOOKS (Thursday) ---
+        if is_anomaly or is_slow_walk:
+            anomaly_payload = {
+                "timestamp": time.time(),
+                "mse": float(mse_score),
+                "severity": severity,
+                "reason": "Sustained Stealth Attack"
+                if is_slow_walk
+                else "Sudden Burst Anomaly",
+                "logs": log_window,
+            }
+            # Store the high-MSE window for the Dashboard Log Explorer
+            await redis_client.lpush(RECENT_ANOMALIES_KEY, json.dumps(anomaly_payload))  # type: ignore
+            await redis_client.ltrim(RECENT_ANOMALIES_KEY, 0, 19)  # type: ignore
+
             ANOMALY_COUNTER.inc()
             background_tasks.add_task(send_security_notification, mse_score, severity)
+
+        PREDICTION_COUNTER.inc()
+        MSE_HISTOGRAM.observe(mse_score)
 
         return {
             "status": "ACTIVE_STREAM",
             "anomaly_detected": bool(is_anomaly),
+            "slow_walk_detected": bool(is_slow_walk),
+            "anomaly_density": f"{anomaly_density:.2%}",
             "risk": {"z_score": round(float(z_score), 4), "severity": severity},
             "mse": float(mse_score),
         }
@@ -314,28 +319,21 @@ async def ingest_log(entry: LogEntry, background_tasks: BackgroundTasks):
 async def provide_feedback(
     feedback: FeedbackRequest, background_tasks: BackgroundTasks
 ):
-    """Accepts auditor feedback via background tasks."""
+    """Accepts auditor feedback via background tasks for GRC governance."""
     try:
         background_tasks.add_task(save_feedback_to_disk, feedback.model_dump())
         return {"status": "FEEDBACK_QUEUED_FOR_RETRAINING"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Feedback Queue Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/reload")
 async def reload_model():
-    """
-    Triggers a live reload of model weights and parameters.
-    Required for promoting a 'Challenger' model after automated retraining.
-    """
-    success = await load_model_artifacts()
-    if success:
+    """Triggers a live reload of model weights and parameters."""
+    if await load_model_artifacts():
         return {
             "status": "SUCCESS",
-            "message": "Production model artifacts reloaded successfully.",
+            "message": "Model artifacts reloaded successfully.",
         }
     else:
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to reload model artifacts. Check server logs.",
-        )
+        raise HTTPException(status_code=500, detail="Failed to reload artifacts.")

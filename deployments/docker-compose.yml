@@ -1,34 +1,43 @@
 services:
-  # The Shared Brain (Distributed State)
   redis:
     image: redis:latest
-    # Default port 6379 is exposed internally to the docker network
-
-  # The Load Balancer (The Traffic Controller)
-  nginx:
-    image: nginx:latest
     ports:
-      - "80:80"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-    depends_on:
-      - securiteai-app
+      - "6379:6379"
 
-  # The Inference Engine (The Scaling Replicas)
-  securiteai-app:
-    build: 
+  api:
+    build:
       context: ..
-      dockerfile: deployments/Dockerfile
+      dockerfile: deployments/Dockerfile.app
+    ports:
+      - "8000:8000"
     environment:
       - REDIS_HOST=redis
-    volumes:
-      - ../artifacts:/app/artifacts
-    deploy:
-      replicas: 3
     depends_on:
       - redis
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/metrics"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+    volumes:
+      - ../artifacts:/app/artifacts
+      - ../visualizations:/app/visualizations
+
+  dashboard:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile.dashboard
+    ports:
+      - "8501:8501"
+    environment:
+      - REDIS_HOST=redis
+    depends_on:
+      - api
+    volumes:
+      - ../artifacts:/app/artifacts
+
+  # Optional: Retrain trigger as a standalone worker
+  trigger:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile.app
+    environment:
+      - REDIS_HOST=redis
+    depends_on:
+      - api
+    command: ["python", "retrain_trigger.py"]

@@ -1,9 +1,13 @@
 fastapi
 uvicorn
-pandas
-numpy
-torch --index-url https://download.pytorch.org/whl/cpu
 pydantic
-prometheus-client
-redis>=4.2.0
+numpy
+pandas
 sentence-transformers
+torch
+redis
+prometheus-client
+streamlit
+plotly
+requests
+matplotlib
