@@ -1,12 +1,19 @@
+# =================================================================
+# SecuriteAI: Distributed Infrastructure Orchestration
+# Description: Manages the lifecycle of the inference fleet, stateful 
+# buffer, and auditor dashboard.
+# =================================================================
 services:
+  # MEMORY: Distributed state for sliding windows
   redis:
     image: redis:latest
     ports:
       - "6379:6379"
 
+  # BRAIN: High-throughput LSTM-Autoencoder API
   api:
     build:
-      context: ..
+      context: .. # Accesses the project root for source code
       dockerfile: deployments/Dockerfile.app
     ports:
       - "8000:8000"
@@ -15,9 +22,12 @@ services:
     depends_on:
       - redis
     volumes:
+      # Mounts host-side artifacts into the container for persistence
+      # and 'Live Reload' support.
       - ../artifacts:/app/artifacts
       - ../visualizations:/app/visualizations
 
+  # EYES: Real-time telemetry and GRC Log Explorer
   dashboard:
     build:
       context: ..
@@ -31,7 +41,7 @@ services:
     volumes:
       - ../artifacts:/app/artifacts
 
-  # Optional: Retrain trigger as a standalone worker
+  # GOVERNANCE: Standalone worker for Champion-Challenger logic
   trigger:
     build:
       context: ..
@@ -40,4 +50,5 @@ services:
       - REDIS_HOST=redis
     depends_on:
       - api
+    # Overrides the default API command to run the evolution script
     command: ["python", "retrain_trigger.py"]

@@ -1,12 +1,21 @@
+# =================================================================
+# SecuriteAI: Auditor Command Center Image
+# Description: Streamlit-based UI for live telemetry
+# =================================================================
 FROM python:3.10-slim
 
 WORKDIR /app
 
+# 1. DEPENDENCY LAYER
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# 2. CODE LAYER
 COPY . .
 
+# 3. NETWORK LAYER: Streamlit default port
 EXPOSE 8501
 
+# 4. EXECUTION LAYER
+# Configured with address 0.0.0.0 for cross-container availability.
 CMD ["streamlit", "run", "dashboard.py", "--server.port=8501", "--server.address=0.0.0.0"]

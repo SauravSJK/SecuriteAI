@@ -1,3 +1,16 @@
+"""
+SecuriteAI Modeling Pipeline
+----------------------------
+Main Author: Saurav Jayakumar
+Description: Orchestrates the end-to-end lifecycle of the LSTM-Autoencoder.
+Handles synthetic data generation, 'Poisoned Normalization', threshold
+definition, and GRC-driven fine-tuning.
+
+Phases:
+1. Full Training: Establishes the initial statistical baseline.
+2. Fine-Tuning: Refines the model using human-validated feedback.
+"""
+
 import os
 import argparse
 import json
@@ -10,13 +23,13 @@ import random
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, TensorDataset
 
-# SecuriteAI core component imports
+# Core SecuriteAI component imports
 from src.models.autoencoder import Autoencoder
 from src.processing.clean_log import clean_linux_logs
 from src.processing.feat_eng import feature_engineering_pipeline
 from src.utils.generate_data import generate_securiteai_dataset
 
-# Configuration of library-specific environment variables for cleaner output
+# Environment configuration for cleaner execution
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import warnings
 import logging
@@ -28,7 +41,7 @@ warnings.simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
 # =================================================================
 # 1. GLOBAL CONFIGURATION & PATHS
 # =================================================================
-# Artifact directories align with the production API expectations
+# Directory structure aligned with production API and Docker volumes
 WEIGHTS_DIR = "artifacts/weights"
 PARAMETERS_DIR = "artifacts/parameters"
 FEEDBACK_DIR = "artifacts/feedback"
@@ -41,7 +54,7 @@ LOSS_METRICS_PATH = os.path.join(PARAMETERS_DIR, "loss_metrics.npy")
 VISUAL_PATH = os.path.join(VISUALIZATION_DIR, "securiteai_visual_report.png")
 
 # Model hyper-parameters optimized for log temporal context
-INPUT_DIM = 9 + 384  # 9 base features + 384 NLP embedding dimensions
+INPUT_DIM = 9 + 384  # 9 cyclical/categorical + 384 semantic dimensions
 HIDDEN_DIM = 128
 WINDOW_SIZE = 20
 BATCH_SIZE = 64
@@ -56,19 +69,13 @@ def get_per_sequence_losses(
     model: Autoencoder, loader: DataLoader, device: torch.device
 ):
     """
-    Computes the Mean Squared Error (MSE) for every window in a dataset.
+    Computes the Reconstruction MSE for every window in a dataset.
 
-    This function avoids reduction (averaging) to allow for statistical
-    analysis of the reconstruction error distribution. This is critical
-    for defining the anomaly threshold.
-
-    Args:
-        model: The trained LSTM-Autoencoder model.
-        loader: A PyTorch DataLoader containing log sequences.
-        device: The compute device (CPU/GPU) to perform inference on.
+    Avoids averaging to allow for statistical distribution analysis, which
+    is critical for defining the 99.5th percentile threshold.
 
     Returns:
-        np.ndarray: A 1D array of MSE scores, one for each input window.
+        np.ndarray: A 1D array of MSE scores for each input window.
     """
     model.eval()
     criterion = nn.MSELoss(reduction="none")
@@ -77,7 +84,7 @@ def get_per_sequence_losses(
     with torch.no_grad():
         for batch in loader:
             x = batch[0].to(device)
-            # Calculate MSE over the flattened temporal window (WINDOW_SIZE * INPUT_DIM)
+            # Calculate MSE over the temporal window
             reconstruction = model(x)
             loss = criterion(reconstruction, x).mean(dim=(1, 2))
             losses.extend(loss.cpu().numpy())
@@ -87,32 +94,29 @@ def get_per_sequence_losses(
 
 def load_feedback_data():
     """
-    Individually processes auditor-validated feedback files.
+    Processes auditor-validated feedback as isolated temporal units.
 
-    To maintain temporal integrity, each 20-log feedback window is
-    engineered as an isolated unit. This prevents interleaving of
-    unrelated log streams during the cleaning phase.
+    Utilizes the existing production scaler to ensure feedback data
+    is mapped into the correct feature space.
 
     Returns:
-        np.ndarray or None: A stacked 3D tensor of engineered log windows,
-                           or None if the feedback directory is empty.
+        np.ndarray or None: Stacked 3D tensor of engineered windows.
     """
     feedback_files = glob.glob(os.path.join(FEEDBACK_DIR, "*.json"))
     if not feedback_files:
         return None
 
-    # Load the baseline scaler to ensure feedback data matches training space
+    # Sync with production scaling parameters
     s_params = np.load(SCALER_PATH)
     all_engineered_windows = []
 
     for f_path in feedback_files:
         with open(f_path, "r") as f:
             data = json.load(f)
-            # Convert raw JSON logs into a temporary DataFrame for feature extraction
             df = pd.DataFrame(data["logs"])
             cleaned_df = clean_linux_logs(df)
 
-            # Engineer the window as a discrete temporal sequence
+            # Engineer as a discrete sequence
             window = feature_engineering_pipeline(
                 cleaned_df,
                 window_size=WINDOW_SIZE,
@@ -130,7 +134,7 @@ def load_feedback_data():
 
 def main():
     """
-    Main entry point for initial training and GRC-driven fine-tuning.
+    Orchestrates initial training or Champion-Challenger refinement.
     """
     parser = argparse.ArgumentParser(description="SecuriteAI Modeling Pipeline")
     parser.add_argument(
@@ -140,7 +144,7 @@ def main():
     )
     args = parser.parse_args()
 
-    # Hardware acceleration detection (NVIDIA CUDA, Apple MPS, or CPU)
+    # Hardware acceleration detection
     DEVICE = torch.device(
         "cuda"
         if torch.cuda.is_available()
@@ -151,15 +155,14 @@ def main():
 
     if args.finetune:
         # --- PHASE: FINE-TUNING (CHAMPION-CHALLENGER) ---
-        # Refines the model using human-validated False Positives
         print("[*] Entering Fine-Tuning mode...")
         feedback_windows = load_feedback_data()
 
         if feedback_windows is None:
-            print("[!] No feedback data found in artifacts/feedback. Aborting.")
+            print("[!] No feedback data found. Aborting.")
             return
 
-        # Initialize the current "Champion" model from disk
+        # Initialize current 'Champion' for competition
         champion = Autoencoder(INPUT_DIM, HIDDEN_DIM, WINDOW_SIZE).to(DEVICE)
         champion.load_state_dict(torch.load(MODEL_WEIGHTS, map_location=DEVICE))
 
@@ -167,17 +170,16 @@ def main():
             TensorDataset(torch.tensor(feedback_windows).float()), batch_size=BATCH_SIZE
         )
 
-        # Establish a baseline performance for the Champion on the feedback set
         champ_losses = get_per_sequence_losses(champion, fb_loader, DEVICE)
         champ_mean_mse = np.mean(champ_losses)
 
-        # Optimization: Use a lower learning rate (1e-4) to prevent catastrophic forgetting
+        # Use conservative Learning Rate to prevent catastrophic forgetting
         optimizer = torch.optim.Adam(champion.parameters(), lr=1e-4)
         criterion = nn.MSELoss()
 
-        print(f"[*] Champion MSE on feedback: {champ_mean_mse:.6f}. Fine-tuning...")
+        print(f"[*] Champion MSE: {champ_mean_mse:.6f}. Fine-tuning...")
         champion.train()
-        for _ in range(10):  # Controlled 10-epoch pass for refinement
+        for _ in range(10):  # Brief pass for refinement
             for batch in fb_loader:
                 x = batch[0].to(DEVICE)
                 optimizer.zero_grad()
@@ -185,37 +187,34 @@ def main():
                 loss.backward()
                 optimizer.step()
 
-        # Validation: Only promote the Challenger if it reduces MSE on the feedback set
+        # CHAMPION-CHALLENGER VALIDATION
         chall_mean_mse = np.mean(get_per_sequence_losses(champion, fb_loader, DEVICE))
         if chall_mean_mse < champ_mean_mse:
             print(f"[SUCCESS] Challenger MSE: {chall_mean_mse:.6f}. Promoting weights.")
             torch.save(champion.state_dict(), MODEL_WEIGHTS)
         else:
-            print("[!] Challenger failed to improve over Champion. Pass discarded.")
+            print("[!] Challenger failed to improve. Pass discarded.")
 
     else:
         # --- PHASE: FULL TRAINING ---
-        # Establishes the initial behavioral baseline of the system
-        print("[*] Generating and isolating system logs...")
+        print("[*] Generating system logs...")
         raw_logs = generate_securiteai_dataset()
 
-        # Strategy: Poisoned Normalization. We isolate Attack data to prevent
-        # the scaler from learning attack-state ranges.
+        # ISOLATION NORMALIZATION: FIT ON NORMAL ONLY
         norm_df = raw_logs[raw_logs["Component"] != "auth-service"].copy()
         anom_df = raw_logs[raw_logs["Component"] == "auth-service"].copy()
 
         clean_norm, clean_anom = clean_linux_logs(norm_df), clean_linux_logs(anom_df)
 
-        # Fit scaler ONLY on normal logs
+        # Fit scaler ONLY on normal logs to maximize anomaly 'surprise'
         norm_windows = feature_engineering_pipeline(clean_norm, scaler_path=SCALER_PATH)
         s_params = np.load(SCALER_PATH)
 
-        # Apply the 'Normal' scaler to anomaly data to maximize reconstruction failure
         anom_windows = feature_engineering_pipeline(
             clean_anom, scaler_params=(s_params[0], s_params[1])
         )
 
-        # IID Shuffling: Ensures the model learns the system heartbeat, not just a timeline
+        # IID SHUFFLING: Ensures model learns system heartbeat, not just timeline
         indices = list(range(len(norm_windows)))
         random.seed(42)
         random.shuffle(indices)
@@ -237,7 +236,7 @@ def main():
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
         criterion = nn.MSELoss()
 
-        print(f"[*] Training model for 100 epochs on {DEVICE}...")
+        print(f"[*] Training for 100 epochs on {DEVICE}...")
         for epoch in range(100):
             model.train()
             for batch in train_loader:
@@ -247,15 +246,15 @@ def main():
                 loss.backward()
                 optimizer.step()
 
-        # Thresholding: Define 'Normal' as the 99.5th percentile of training MSE
+        # Define 'Normal' as 99.5th percentile of training error
         train_losses = get_per_sequence_losses(model, train_loader, DEVICE)
         threshold = np.percentile(train_losses, 99.5)
 
         norm_test_losses = get_per_sequence_losses(model, test_norm_loader, DEVICE)
         anom_test_losses = get_per_sequence_losses(model, test_anom_loader, DEVICE)
 
-        # Performance Reporting
-        print("\n" + "=" * 45 + "\n SECURITEAI: FINAL PERFORMANCE REPORT\n" + "=" * 45)
+        # PERFORMANCE REPORT
+        print("\n" + "=" * 45 + "\n SECURITEAI: PERFORMANCE REPORT\n" + "=" * 45)
         print(
             f"False Positive Rate:      {(np.sum(norm_test_losses > threshold) / len(norm_test_losses)) * 100:.2f}%"
         )
@@ -267,14 +266,12 @@ def main():
         )
         print("=" * 45)
 
-        # Artifact Persistence
         torch.save(model.state_dict(), MODEL_WEIGHTS)
         np.save(THRESHOLD_PATH, threshold)
         np.save(LOSS_METRICS_PATH, np.array([norm_test_losses]))
 
-        # --- PHASE: SKYSCRAPER VISUALIZATION ---
-        # Generates a log-scale plot showing the mathematical gap between states
-        print(f"[*] Generating Skyscraper Plot: {VISUAL_PATH}")
+        # SKYSCRAPER VISUALIZATION
+        print(f"[*] Generating Visual Report: {VISUAL_PATH}")
         all_windows = np.concatenate([norm_windows, anom_windows])
         model.eval()
         with torch.no_grad():
@@ -289,14 +286,14 @@ def main():
             y=threshold,
             color="red",
             linestyle="--",
-            label=f"Anomaly Threshold ({threshold:.4f})",
+            label=f"Threshold ({threshold:.4f})",
         )
-        plt.yscale("log")  # Log scale is required to visualize the massive SNR gap
+        plt.yscale("log")  # Log scale highlights massive SNR gap
         plt.grid(True, which="both", ls="-", alpha=0.2)
         plt.text(
             len(norm_windows) // 2,
             threshold * 2,
-            "NORMAL STATE",
+            "NORMAL",
             color="green",
             fontweight="bold",
             ha="center",
@@ -304,7 +301,7 @@ def main():
         plt.text(
             len(norm_windows) + (len(anom_windows) // 2),
             threshold * 50,
-            "ATTACK BURST",
+            "ATTACK",
             color="red",
             fontweight="bold",
             ha="center",

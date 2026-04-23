@@ -1,13 +1,34 @@
+# =================================================================
+# SecuriteAI: Enterprise Dependency Manifest
+# =================================================================
+
+# --- 1. CORE API & DATA GOVERNANCE ---
+# High-throughput ingestion and Pydantic-based log validation.
 fastapi
 uvicorn
 pydantic
+
+# --- 2. DEEP LEARNING & SEMANTIC INTELLIGENCE ---
+# Powers the LSTM-Autoencoder and 'all-MiniLM-L6-v2' embeddings.
+torch
+sentence-transformers
+
+# --- 3. DATA ENGINEERING & PIPELINES ---
+# Handles IID Shuffling, cleaning, and cyclical feature engineering.
 numpy
 pandas
-sentence-transformers
-torch
+
+# --- 4. DISTRIBUTED STATE & TELEMETRY ---
+# Manages the atomic sliding window buffer and Prometheus metrics.
 redis
 prometheus-client
+
+# --- 5. AUDITOR COMMAND CENTER ---
+# Drives the real-time GRC dashboard and log-scale visualizations.
 streamlit
 plotly
+
+# --- 6. ADVERSARIAL TESTING & REPORTING ---
+# Facilitates 'Red Team' attacks and 'Skyscraper' training reports.
 requests
 matplotlib
